@@ -4,7 +4,9 @@ let activeSessionData = null;
 let timerInterval = null;
 let activeSessionModalInstance = null;
 let clearRosterModalInstance = null;
+let editPlayerModalInstance = null;
 let selectedSearchPlayer = null;
+let tempSearchPlayerEdit = null;
 
 // -------------------------------------------------------------
 // INITIALIZATION
@@ -12,11 +14,12 @@ let selectedSearchPlayer = null;
 document.addEventListener("DOMContentLoaded", async () => {
   activeSessionModalInstance = new bootstrap.Modal(document.getElementById('activeSessionModal'));
   clearRosterModalInstance = new bootstrap.Modal(document.getElementById('clearRosterModal'));
+  editPlayerModalInstance = new bootstrap.Modal(document.getElementById('editPlayerModal'));
 
   setupSearchAutocompleteListener();
+  
   renderRoster(); // Initial render for empty roster state
   await checkDbConnection();
-  await loadGameTypes();
   await checkForActiveGameSession();
 });
 
@@ -57,50 +60,6 @@ function showToast(message, type = 'danger') {
   toastEl.addEventListener('hidden.bs.toast', () => {
     toastEl.remove();
   });
-}
-
-// Check Supabase Connection
-async function checkDbConnection() {
-  const statusBadge = document.getElementById('dbConnectionStatus');
-  try {
-    const { data, error } = await db.from('gametype').select('count', { count: 'exact', head: true });
-    if (error) throw error;
-    
-    statusBadge.className = "badge bg-success db-badge px-2 py-1";
-    statusBadge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Supabase Connected';
-  } catch (err) {
-    console.warn("Database connection issue:", err);
-    statusBadge.className = "badge bg-warning text-dark db-badge px-2 py-1";
-    statusBadge.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Offline / Limited';
-  }
-}
-
-// Load Game Types from Supabase
-async function loadGameTypes() {
-  const selectEl = document.getElementById('gameTypeSelect');
-  selectEl.innerHTML = `<option value="" disabled selected>Loading options...</option>`;
-
-  try {
-    const { data, error } = await db.from('gametype').select('*').order('gametypeid', { ascending: true });
-    
-    if (error || !data || data.length === 0) throw new Error("Could not load gametype records");
-
-    selectEl.innerHTML = `<option value="" disabled selected>Select game type...</option>`;
-    data.forEach(gt => {
-      const opt = document.createElement('option');
-      opt.value = gt.gametypeid;
-      opt.textContent = `${gt.gametypeid}. ${gt.name}`;
-      selectEl.appendChild(opt);
-    });
-  } catch (err) {
-    console.warn("Fallback to default game types:", err);
-    selectEl.innerHTML = `
-      <option value="" disabled selected>Select game type...</option>
-      <option value="1">1. Social Mix</option>
-      <option value="2">2. Skill Separated</option>
-      <option value="3">3. Winners/Losers</option>
-    `;
-  }
 }
 
 // -------------------------------------------------------------
@@ -202,53 +161,108 @@ function setupSearchAutocompleteListener() {
   });
 }
 
-async function searchPlayersInDb(query) {
+function searchPlayersInDb(query) {
   const dropdown = document.getElementById('autocompleteDropdown');
   
-  try {
-    const { data, error } = await db
-      .from('players')
-      .select('*')
-      .ilike('name', `%${query}%`)
-      .limit(5);
+  db.from('players')
+    .select('playerid, name, gender, ratingid')
+    .ilike('name', `%${query}%`)
+    .limit(5)
+    .then(({ data, error }) => {
+      if (error) throw error;
 
-    if (error) throw error;
+      dropdown.innerHTML = '';
 
-    dropdown.innerHTML = '';
+      if (data && data.length > 0) {
+        data.forEach(player => {
+          const item = document.createElement('div');
+          item.className = 'autocomplete-item border-bottom d-flex justify-content-between align-items-center p-2 bg-white';
+          item.style.cursor = 'pointer';
 
-    if (data && data.length > 0) {
-      data.forEach(player => {
+          const idBadge = `<span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1" style="font-size:0.65rem;">ID: ${player.playerid}</span>`;
+          
+          let ratingBadge = '';
+          if (player.ratingid && RATING_MAP[player.ratingid]) {
+            ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning" style="font-size:0.65rem;"><i class="bi bi-star-fill text-warning me-1"></i>${RATING_MAP[player.ratingid].value}</span>`;
+          }
+
+          let genderBadge = '';
+          if (player.gender) {
+            const genderText = player.gender === 'F' ? 'Female (F)' : 'Male (M)';
+            genderBadge = `<span class="badge bg-info bg-opacity-10 text-info border border-info" style="font-size:0.65rem;">${genderText}</span>`;
+          }
+
+          const escapedName = escapeHtml(player.name).replace(/'/g, "\\'");
+          const safeRatingId = player.ratingid !== null && player.ratingid !== undefined ? player.ratingid : 'null';
+          const safeGender = player.gender ? player.gender : '';
+
+          item.innerHTML = `
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <i class="bi bi-person-fill text-primary"></i>
+              <span class="fw-semibold text-dark">${escapeHtml(player.name)}</span>
+              ${ratingBadge}
+              ${genderBadge}
+              ${idBadge}
+            </div>
+            <div class="d-flex align-items-center gap-1">
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Edit before adding" onclick="event.stopPropagation(); openEditExistingPlayerModal(${player.playerid}, '${escapedName}', ${safeRatingId}, '${safeGender}')">
+                <i class="bi bi-pencil-fill"></i>
+              </button>
+            </div>
+          `;
+          
+          item.onclick = () => selectAutocompletePlayer(player.playerid, player.name, player.ratingid, player.gender);
+          dropdown.appendChild(item);
+        });
+      } else {
         const item = document.createElement('div');
-        item.className = 'autocomplete-item border-bottom d-flex justify-content-between align-items-center';
-        item.innerHTML = `
-          <div>
-            <span class="fw-medium">${escapeHtml(player.name)}</span>
-            <span class="badge bg-light text-dark border ms-2">ID: ${player.playerid}</span>
-          </div>
-          <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 small">Existing Player</span>
-        `;
-        item.onclick = () => selectAutocompletePlayer(player);
+        item.className = 'autocomplete-item text-muted small p-2 bg-white';
+        item.innerHTML = `<i class="bi bi-info-circle me-1"></i>No existing player found. Click "Add New Player" to create.`;
         dropdown.appendChild(item);
-      });
-    } else {
-      const item = document.createElement('div');
-      item.className = 'autocomplete-item text-muted small';
-      item.innerHTML = `<i class="bi bi-info-circle me-1"></i>No existing player found. Click "Add New Player" to create.`;
-      dropdown.appendChild(item);
-    }
+      }
 
-    dropdown.classList.remove('d-none');
-  } catch (err) {
-    console.error("Autocomplete search error:", err);
-  }
+      dropdown.classList.remove('d-none');
+    })
+    .catch(err => {
+      console.error("Autocomplete search error:", err);
+    });
 }
 
-function selectAutocompletePlayer(player) {
-  document.getElementById('singlePlayerInput').value = player.name;
-  selectedSearchPlayer = player;
+function selectAutocompletePlayer(playerId, name, ratingid, gender) {
+  document.getElementById('singlePlayerInput').value = '';
   document.getElementById('autocompleteDropdown').classList.add('d-none');
   
-  addSinglePlayerFromInput();
+  addPlayerToRoster(name, playerId, ratingid, gender, true);
+}
+
+function openEditExistingPlayerModal(playerId, name, ratingid, gender) {
+  document.getElementById('autocompleteDropdown').classList.add('d-none');
+  
+  tempSearchPlayerEdit = {
+    playerid: playerId,
+    name: name,
+    ratingid: ratingid !== null && ratingid !== undefined && !isNaN(ratingid) ? ratingid : null,
+    gender: gender ? gender : null
+  };
+
+  document.getElementById('editPlayerIndex').value = 'temp';
+  document.getElementById('editPlayerName').value = tempSearchPlayerEdit.name || '';
+  document.getElementById('editPlayerGender').value = tempSearchPlayerEdit.gender || '';
+
+  if (tempSearchPlayerEdit.ratingid) {
+    setStarRating(tempSearchPlayerEdit.ratingid);
+  } else {
+    const stars = document.querySelectorAll('#starRatingContainer .style-star');
+    stars.forEach(s => {
+      s.classList.remove('bi-star-fill');
+      s.classList.add('bi-star');
+    });
+    document.getElementById('editPlayerRatingId').value = '';
+    document.getElementById('ratingValueBadge').textContent = 'Unassigned';
+  }
+
+  editPlayerModalInstance.show();
+  document.getElementById('singlePlayerInput').value = '';
 }
 
 async function addSinglePlayerFromInput() {
@@ -261,7 +275,6 @@ async function addSinglePlayerFromInput() {
     return;
   }
 
-  // 1. Pre-check if player is already in current roster list
   const isAlreadyInRoster = currentRoster.some(p => p.name.trim().toLowerCase() === name.toLowerCase());
   if (isAlreadyInRoster) {
     showToast(`"${name}" is already in the roster.`, "warning");
@@ -271,9 +284,14 @@ async function addSinglePlayerFromInput() {
     return;
   }
 
-  // 2. User clicked directly from autocomplete dropdown list
   if (selectedSearchPlayer) {
-    const added = addPlayerToRoster(selectedSearchPlayer.name, selectedSearchPlayer.playerid, true);
+    const added = addPlayerToRoster(
+      selectedSearchPlayer.name, 
+      selectedSearchPlayer.playerid, 
+      selectedSearchPlayer.ratingid, 
+      selectedSearchPlayer.gender, 
+      true
+    );
     if (added) {
       input.value = '';
     }
@@ -282,15 +300,13 @@ async function addSinglePlayerFromInput() {
     return;
   }
 
-  // 3. User clicked "Add New Player" button or pressed Enter
   btn.disabled = true;
   btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Checking...`;
 
   try {
-    // Check if player ALREADY exists in database
     const { data: existingDbPlayers, error: searchErr } = await db
       .from('players')
-      .select('*')
+      .select('playerid, name, gender, ratingid')
       .ilike('name', name);
 
     if (searchErr) throw searchErr;
@@ -298,23 +314,33 @@ async function addSinglePlayerFromInput() {
     const exactMatch = existingDbPlayers ? existingDbPlayers.find(p => p.name.trim().toLowerCase() === name.toLowerCase()) : null;
 
     if (exactMatch) {
-      // Player already exists in DB -> Add directly to roster
-      addPlayerToRoster(exactMatch.name, exactMatch.playerid, false);
+      addPlayerToRoster(
+        exactMatch.name, 
+        exactMatch.playerid, 
+        exactMatch.ratingid, 
+        exactMatch.gender, 
+        false
+      );
       showToast(`Found "${exactMatch.name}" in database and added to roster!`, "info");
       input.value = '';
     } else {
-      // Player does NOT exist in DB -> Insert new record
       btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
       
       const { data: newData, error: insertErr } = await db
         .from('players')
-        .insert([{ name: name }])
+        .insert([{ name: name, ratingid: null, gender: null }])
         .select();
 
       if (insertErr) throw insertErr;
 
       const newPlayer = newData[0];
-      addPlayerToRoster(newPlayer.name, newPlayer.playerid, false);
+      addPlayerToRoster(
+        newPlayer.name, 
+        newPlayer.playerid, 
+        newPlayer.ratingid, 
+        newPlayer.gender, 
+        false
+      );
       showToast(`Created new player "${newPlayer.name}" and added to roster!`, "success");
       input.value = '';
     }
@@ -360,7 +386,6 @@ async function addMultiLinePlayers() {
     return;
   }
 
-  // Filter out duplicates already in current roster
   const newNames = [];
   const duplicateNames = [];
 
@@ -386,16 +411,28 @@ async function addMultiLinePlayers() {
     let addedCount = 0;
 
     for (let name of newNames) {
-      const { data: existingDbPlayers } = await db.from('players').select('*').ilike('name', name);
+      const { data: existingDbPlayers } = await db.from('players').select('playerid, name, gender, ratingid').ilike('name', name);
       const exactMatch = existingDbPlayers ? existingDbPlayers.find(p => p.name.trim().toLowerCase() === name.toLowerCase()) : null;
 
       if (exactMatch) {
-        addPlayerToRoster(exactMatch.name, exactMatch.playerid, false);
+        addPlayerToRoster(
+          exactMatch.name, 
+          exactMatch.playerid, 
+          exactMatch.ratingid, 
+          exactMatch.gender, 
+          false
+        );
         addedCount++;
       } else {
-        const { data: newData } = await db.from('players').insert([{ name: name }]).select();
+        const { data: newData } = await db.from('players').insert([{ name: name, ratingid: null, gender: null }]).select();
         if (newData && newData.length > 0) {
-          addPlayerToRoster(newData[0].name, newData[0].playerid, false);
+          addPlayerToRoster(
+            newData[0].name, 
+            newData[0].playerid, 
+            newData[0].ratingid, 
+            newData[0].gender, 
+            false
+          );
           addedCount++;
         }
       }
@@ -417,12 +454,11 @@ async function addMultiLinePlayers() {
 }
 
 // -------------------------------------------------------------
-// ROSTER MANAGEMENT
+// ROSTER MANAGEMENT & EDIT MODAL HANDLERS
 // -------------------------------------------------------------
-function addPlayerToRoster(name, playerId, showNotification = true) {
+function addPlayerToRoster(name, playerId, ratingid = null, gender = null, showNotification = true) {
   const cleanName = name.trim();
 
-  // Check if player is already in roster
   const exists = currentRoster.some(p => {
     const sameId = playerId && p.playerid && String(p.playerid) === String(playerId);
     const sameName = p.name.trim().toLowerCase() === cleanName.toLowerCase();
@@ -434,9 +470,24 @@ function addPlayerToRoster(name, playerId, showNotification = true) {
     return false;
   }
 
+  let validGender = null;
+  if (gender) {
+    const upperG = String(gender).trim().toUpperCase();
+    if (upperG === 'M' || upperG === 'MALE') validGender = 'M';
+    else if (upperG === 'F' || upperG === 'FEMALE') validGender = 'F';
+  }
+
+  let validRatingId = null;
+  if (ratingid !== null && ratingid !== undefined && ratingid !== '') {
+    const parsedRating = parseInt(ratingid, 10);
+    if (!isNaN(parsedRating)) validRatingId = parsedRating;
+  }
+
   currentRoster.push({
     playerid: playerId,
-    name: cleanName
+    name: cleanName,
+    ratingid: validRatingId,
+    gender: validGender
   });
 
   renderRoster();
@@ -469,7 +520,6 @@ function executeClearRoster() {
   currentRoster = [];
   renderRoster();
 
-  // Close modal reliably
   const modalEl = document.getElementById('clearRosterModal');
   const modalInstance = bootstrap.Modal.getInstance(modalEl) || clearRosterModalInstance;
   if (modalInstance) {
@@ -479,7 +529,137 @@ function executeClearRoster() {
   showToast("Roster cleared.", "info");
 }
 
-// ROSTER RENDERING - Safe DOM Construction
+function setStarRating(starCount) {
+  const stars = document.querySelectorAll('#starRatingContainer .style-star');
+  stars.forEach((star, index) => {
+    if (index < starCount) {
+      star.classList.remove('bi-star');
+      star.classList.add('bi-star-fill');
+    } else {
+      star.classList.remove('bi-star-fill');
+      star.classList.add('bi-star');
+    }
+  });
+
+  const ratingInfo = RATING_MAP[starCount] || { ratingid: null, label: "Unassigned" };
+  document.getElementById('editPlayerRatingId').value = ratingInfo.ratingid || '';
+  document.getElementById('ratingValueBadge').textContent = ratingInfo.label;
+}
+
+function openEditPlayerModal(index) {
+  const player = currentRoster[index];
+  if (!player) return;
+
+  tempSearchPlayerEdit = null;
+  document.getElementById('editPlayerIndex').value = index;
+  document.getElementById('editPlayerName').value = player.name || '';
+  document.getElementById('editPlayerGender').value = player.gender || '';
+
+  if (player.ratingid) {
+    setStarRating(player.ratingid);
+  } else {
+    const stars = document.querySelectorAll('#starRatingContainer .style-star');
+    stars.forEach(s => {
+      s.classList.remove('bi-star-fill');
+      s.classList.add('bi-star');
+    });
+    document.getElementById('editPlayerRatingId').value = '';
+    document.getElementById('ratingValueBadge').textContent = 'Unassigned';
+  }
+
+  editPlayerModalInstance.show();
+}
+
+async function savePlayerEdit() {
+  const indexVal = document.getElementById('editPlayerIndex').value;
+  const newName = document.getElementById('editPlayerName').value.trim();
+  const rawRatingId = document.getElementById('editPlayerRatingId').value;
+  const rawGender = document.getElementById('editPlayerGender').value;
+  const saveBtn = document.getElementById('saveEditBtn');
+
+  if (!newName) {
+    showToast("Player name cannot be empty.", "warning");
+    return;
+  }
+
+  const newRatingId = rawRatingId ? parseInt(rawRatingId, 10) : null;
+  const newGender = rawGender ? rawGender : null;
+
+  if (indexVal === 'temp' && tempSearchPlayerEdit) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
+
+    try {
+      if (tempSearchPlayerEdit.playerid) {
+        const { error } = await db
+          .from('players')
+          .update({
+            name: newName,
+            ratingid: newRatingId,
+            gender: newGender
+          })
+          .eq('playerid', tempSearchPlayerEdit.playerid);
+
+        if (error) throw error;
+      }
+
+      addPlayerToRoster(newName, tempSearchPlayerEdit.playerid, newRatingId, newGender, true);
+      showToast(`Updated and added "${newName}" to roster!`, "success");
+    } catch (err) {
+      console.error("Error updating player in database:", err);
+      showToast("Database update failed: " + err.message, "danger");
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Changes`;
+      tempSearchPlayerEdit = null;
+      editPlayerModalInstance.hide();
+    }
+    return;
+  }
+
+  const index = parseInt(indexVal, 10);
+  const player = currentRoster[index];
+
+  if (player && player.playerid) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
+
+    try {
+      const { error } = await db
+        .from('players')
+        .update({
+          name: newName,
+          ratingid: newRatingId,
+          gender: newGender
+        })
+        .eq('playerid', player.playerid);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error("Error updating player in database:", err);
+      showToast("Database update failed: " + err.message, "danger");
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Changes`;
+      return;
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Changes`;
+    }
+  }
+
+  currentRoster[index] = {
+    ...currentRoster[index],
+    name: newName,
+    ratingid: newRatingId,
+    gender: newGender
+  };
+
+  renderRoster();
+  editPlayerModalInstance.hide();
+  showToast(`Updated "${newName}" in roster!`, "success");
+}
+
+// ROSTER RENDERING
 function renderRoster() {
   const container = document.getElementById('rosterContainer');
   const badge = document.getElementById('rosterCountBadge');
@@ -500,15 +680,31 @@ function renderRoster() {
 
   currentRoster.forEach((player, idx) => {
     const tag = document.createElement('div');
-    tag.className = 'badge bg-white text-dark border shadow-sm player-tag d-flex align-items-center gap-2';
+    tag.className = 'badge bg-white text-dark border shadow-sm player-tag d-flex align-items-center gap-2 p-2';
     
-    const sourceBadge = `<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:0.65rem;">ID: ${player.playerid}</span>`;
+    const idBadge = player.playerid 
+      ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1" style="font-size:0.65rem;">ID: ${player.playerid}</span>` 
+      : '';
+
+    let ratingBadge = '';
+    if (player.ratingid && RATING_MAP[player.ratingid]) {
+      ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning" style="font-size:0.65rem;"><i class="bi bi-star-fill text-warning me-1"></i>${RATING_MAP[player.ratingid].value}</span>`;
+    }
+
+    let genderBadge = '';
+    if (player.gender) {
+      const genderText = player.gender === 'F' ? 'Female (F)' : 'Male (M)';
+      genderBadge = `<span class="badge bg-info bg-opacity-10 text-info border border-info" style="font-size:0.65rem;">${genderText}</span>`;
+    }
 
     tag.innerHTML = `
-      <i class="bi bi-person-fill text-secondary"></i>
-      <span>${escapeHtml(player.name)}</span>
-      ${sourceBadge}
-      <i class="bi bi-x-circle-fill text-muted text-hover-danger ms-1" style="cursor:pointer;" onclick="removePlayerFromRoster(${idx})" title="Remove"></i>
+      <i class="bi bi-person-fill text-primary"></i>
+      <span class="fw-semibold text-dark">${escapeHtml(player.name)}</span>
+      ${ratingBadge}
+      ${genderBadge}
+      ${idBadge}
+      <i class="bi bi-pencil-fill text-muted text-hover-primary ms-1" style="cursor:pointer;" onclick="openEditPlayerModal(${idx})" title="Edit Player"></i>
+      <i class="bi bi-x-circle-fill text-muted text-hover-danger" style="cursor:pointer;" onclick="removePlayerFromRoster(${idx})" title="Remove"></i>
     `;
     container.appendChild(tag);
   });
@@ -560,6 +756,9 @@ async function startNewSession() {
     currentRoster = [];
     renderRoster();
     document.getElementById('sessionForm').reset();
+    
+    const descEl = document.getElementById('gameTypeDescription');
+    if (descEl) descEl.style.display = 'none';
 
   } catch (err) {
     console.error("Error starting session:", err);

@@ -49,6 +49,8 @@
             <select class="form-select form-select-lg" id="gameTypeSelect" required>
               <option value="" disabled selected>Loading game types from database...</option>
             </select>
+            <!-- Game Type Description Placeholder -->
+            <div id="gameTypeDescription" class="form-text text-muted mt-1 small" style="display: none;"></div>
           </div>
 
           <!-- 3. Player Roster Entry -->
@@ -119,13 +121,72 @@
           </div>
 
           <!-- Submit Button -->
-          <button type="submit" id="startSessionBtn" class="btn btn-flat-primary btn-lg w-100 fw-bold py-3">
+          <button type="submit" id="startSessionBtn" class="btn btn-primary btn-lg w-100 fw-bold py-3">
             <i class="bi bi-play-circle-fill me-2"></i>Start Matchmaking Session
           </button>
         </form>
       </div>
     </main>
 
+  </div>
+
+  <!-- Edit Player Modal -->
+  <div class="modal fade" id="editPlayerModal" tabindex="-1" aria-labelledby="editPlayerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-dark" id="editPlayerModalLabel">
+            <i class="bi bi-pencil-square text-primary me-2"></i>Edit Roster Player
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body py-3">
+          <form id="editPlayerForm" onsubmit="event.preventDefault(); savePlayerEdit();">
+            <input type="hidden" id="editPlayerIndex">
+            
+            <!-- Name Field -->
+            <div class="mb-3">
+              <label for="editPlayerName" class="form-label fw-medium">Player Name</label>
+              <input type="text" class="form-control" id="editPlayerName" placeholder="Enter player name" required>
+            </div>
+
+            <!-- Pickleball Rating (6-Star Selector) -->
+            <div class="mb-3">
+              <label class="form-label fw-medium d-block">Pickleball Skill Rating</label>
+              <div class="d-flex align-items-center gap-2 mb-2" id="starRatingContainer">
+                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(1)" style="cursor:pointer;" title="2.0 - Beginner"></i>
+                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(2)" style="cursor:pointer;" title="2.5 - Advance Beginner"></i>
+                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(3)" style="cursor:pointer;" title="3.0 - Novice"></i>
+                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(4)" style="cursor:pointer;" title="3.5 - Intermediate"></i>
+                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(5)" style="cursor:pointer;" title="4.0 - Advanced"></i>
+                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(6)" style="cursor:pointer;" title="4.5+ - Expert / Pro"></i>
+              </div>
+              <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-warning bg-opacity-25 text-dark border border-warning px-2 py-1 fs-6" id="ratingValueBadge">Unassigned</span>
+                <input type="hidden" id="editPlayerRatingId" value="">
+              </div>
+            </div>
+
+            <!-- Gender Field (Male / Female) -->
+            <div class="mb-3">
+              <label for="editPlayerGender" class="form-label fw-medium">Gender</label>
+              <select class="form-select" id="editPlayerGender">
+                <option value="">Not Specified</option>
+                <option value="M">Male (M)</option>
+                <option value="F">Female (F)</option>
+              </select>
+            </div>
+
+            <div class="modal-footer px-0 pb-0 pt-3 border-top">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-primary fw-medium" id="saveEditBtn">
+                <i class="bi bi-check-circle me-1"></i>Save Changes
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Active Session Modal -->
@@ -172,7 +233,6 @@
           <p class="text-muted small mb-3">This will remove all players from your current queue list.</p>
           <div class="d-flex justify-content-center gap-2">
             <button type="button" class="btn btn-sm btn-light border" data-bs-dismiss="modal">Cancel</button>
-            <!-- Added data-bs-dismiss="modal" to guarantee popup closes -->
             <button type="button" class="btn btn-sm btn-danger" data-bs-dismiss="modal" onclick="executeClearRoster()">Clear All</button>
           </div>
         </div>
@@ -189,6 +249,8 @@
   
   <!-- App JS Files -->
   <script src="js/db.js"></script>
+  <script src="js/ratings.js"></script>
+  <script src="js/gametypes.js"></script>
   <script src="js/index.js"></script>
 </body>
 </html>
