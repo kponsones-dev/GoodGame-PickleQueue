@@ -8,7 +8,8 @@ CREATE TABLE GameType (
 INSERT INTO GameType (GameTypeId, Name) VALUES 
 (1, 'Social Mix'),
 (2, 'Skill Separated'),
-(3, 'Winners/Losers');
+(3, 'Winners/Losers'),
+(4, 'Mixed Gender');
 
 -- 2. Create Game Table
 -- (Created before Players so CurrentGameId can reference it)
