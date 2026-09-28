@@ -14,10 +14,50 @@ document.addEventListener("DOMContentLoaded", async () => {
   clearRosterModalInstance = new bootstrap.Modal(document.getElementById('clearRosterModal'));
 
   setupSearchAutocompleteListener();
+  renderRoster(); // Initial render for empty roster state
   await checkDbConnection();
   await loadGameTypes();
   await checkForActiveGameSession();
 });
+
+// -------------------------------------------------------------
+// TOAST NOTIFICATION PROMPT
+// -------------------------------------------------------------
+function showToast(message, type = 'danger') {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toastId = 'toast-' + Date.now();
+  
+  const bgClass = type === 'success' ? 'bg-success text-white' :
+                  type === 'warning' ? 'bg-warning text-dark' :
+                  type === 'info' ? 'bg-info text-white' : 'bg-danger text-white';
+  
+  const icon = type === 'success' ? 'bi-check-circle-fill' :
+               type === 'warning' ? 'bi-exclamation-triangle-fill' :
+               type === 'info' ? 'bi-info-circle-fill' : 'bi-x-circle-fill';
+
+  const toastHtml = `
+    <div id="${toastId}" class="toast align-items-center ${bgClass} border-0 shadow" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body d-flex align-items-center gap-2">
+          <i class="bi ${icon} fs-5"></i>
+          <span>${escapeHtml(message)}</span>
+        </div>
+        <button type="button" class="btn-close ${type === 'warning' ? '' : 'btn-close-white'} me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+  `;
+
+  container.insertAdjacentHTML('beforeend', toastHtml);
+  const toastEl = document.getElementById(toastId);
+  const bsToast = new bootstrap.Toast(toastEl, { delay: 3500 });
+  bsToast.show();
+
+  toastEl.addEventListener('hidden.bs.toast', () => {
+    toastEl.remove();
+  });
+}
 
 // Check Supabase Connection
 async function checkDbConnection() {
@@ -121,17 +161,17 @@ async function endActiveSession() {
     activeSessionModalInstance.hide();
     activeSessionData = null;
 
-    alert("Session ended successfully.");
+    showToast("Session ended successfully.", "success");
   } catch (err) {
     console.error("Failed to end session:", err);
-    alert("Failed to end session on database: " + err.message);
+    showToast("Failed to end session: " + err.message, "danger");
   }
 }
 
 function resumeActiveSession() {
   if (timerInterval) clearInterval(timerInterval);
   activeSessionModalInstance.hide();
-  alert(`Resuming session "${activeSessionData.gamename}". Redirecting to Queue page...`);
+  showToast(`Resuming session "${activeSessionData.gamename}". Redirecting...`, "info");
 }
 
 // -------------------------------------------------------------
@@ -193,7 +233,7 @@ async function searchPlayersInDb(query) {
     } else {
       const item = document.createElement('div');
       item.className = 'autocomplete-item text-muted small';
-      item.innerHTML = `<i class="bi bi-plus-circle me-1"></i>No player found. Click "Add Player" to save <strong>"${escapeHtml(query)}"</strong>`;
+      item.innerHTML = `<i class="bi bi-info-circle me-1"></i>No existing player found. Click "Add New Player" to create.`;
       dropdown.appendChild(item);
     }
 
@@ -207,6 +247,7 @@ function selectAutocompletePlayer(player) {
   document.getElementById('singlePlayerInput').value = player.name;
   selectedSearchPlayer = player;
   document.getElementById('autocompleteDropdown').classList.add('d-none');
+  
   addSinglePlayerFromInput();
 }
 
@@ -215,37 +256,76 @@ async function addSinglePlayerFromInput() {
   const btn = document.getElementById('addSinglePlayerBtn');
   const name = input.value.trim();
   
-  if (!name) return;
+  if (!name) {
+    showToast("Please enter a player name.", "warning");
+    return;
+  }
 
-  if (selectedSearchPlayer) {
-    addPlayerToRoster(selectedSearchPlayer.name, selectedSearchPlayer.playerid, false);
+  // 1. Pre-check if player is already in current roster list
+  const isAlreadyInRoster = currentRoster.some(p => p.name.trim().toLowerCase() === name.toLowerCase());
+  if (isAlreadyInRoster) {
+    showToast(`"${name}" is already in the roster.`, "warning");
     input.value = '';
     selectedSearchPlayer = null;
-  } else {
-    btn.disabled = true;
-    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
+    document.getElementById('autocompleteDropdown').classList.add('d-none');
+    return;
+  }
 
-    try {
-      const { data, error } = await db
+  // 2. User clicked directly from autocomplete dropdown list
+  if (selectedSearchPlayer) {
+    const added = addPlayerToRoster(selectedSearchPlayer.name, selectedSearchPlayer.playerid, true);
+    if (added) {
+      input.value = '';
+    }
+    selectedSearchPlayer = null;
+    document.getElementById('autocompleteDropdown').classList.add('d-none');
+    return;
+  }
+
+  // 3. User clicked "Add New Player" button or pressed Enter
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Checking...`;
+
+  try {
+    // Check if player ALREADY exists in database
+    const { data: existingDbPlayers, error: searchErr } = await db
+      .from('players')
+      .select('*')
+      .ilike('name', name);
+
+    if (searchErr) throw searchErr;
+
+    const exactMatch = existingDbPlayers ? existingDbPlayers.find(p => p.name.trim().toLowerCase() === name.toLowerCase()) : null;
+
+    if (exactMatch) {
+      // Player already exists in DB -> Add directly to roster
+      addPlayerToRoster(exactMatch.name, exactMatch.playerid, false);
+      showToast(`Found "${exactMatch.name}" in database and added to roster!`, "info");
+      input.value = '';
+    } else {
+      // Player does NOT exist in DB -> Insert new record
+      btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
+      
+      const { data: newData, error: insertErr } = await db
         .from('players')
         .insert([{ name: name }])
         .select();
 
-      if (error) throw error;
+      if (insertErr) throw insertErr;
 
-      const newPlayer = data[0];
+      const newPlayer = newData[0];
       addPlayerToRoster(newPlayer.name, newPlayer.playerid, false);
+      showToast(`Created new player "${newPlayer.name}" and added to roster!`, "success");
       input.value = '';
-    } catch (err) {
-      console.error("Error saving new player:", err);
-      alert("Error saving player to database: " + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = `<i class="bi bi-plus-lg me-1"></i> Add Player`;
     }
+  } catch (err) {
+    console.error("Error adding player:", err);
+    showToast("Error adding player: " + err.message, "danger");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<i class="bi bi-plus-lg me-1"></i> Add New Player`;
+    document.getElementById('autocompleteDropdown').classList.add('d-none');
   }
-
-  document.getElementById('autocompleteDropdown').classList.add('d-none');
 }
 
 // -------------------------------------------------------------
@@ -275,29 +355,61 @@ async function addMultiLinePlayers() {
   const names = parseLinesToNames(rawText);
   const btn = document.getElementById('addMultiPlayerBtn');
 
-  if (names.length === 0) return;
+  if (names.length === 0) {
+    showToast("Please enter at least one player name.", "warning");
+    return;
+  }
+
+  // Filter out duplicates already in current roster
+  const newNames = [];
+  const duplicateNames = [];
+
+  names.forEach(n => {
+    const exists = currentRoster.some(p => p.name.trim().toLowerCase() === n.toLowerCase());
+    if (exists) {
+      duplicateNames.push(n);
+    } else {
+      newNames.push(n);
+    }
+  });
+
+  if (duplicateNames.length > 0) {
+    showToast(`Skipped ${duplicateNames.length} duplicate name(s) already in roster.`, "warning");
+  }
+
+  if (newNames.length === 0) return;
 
   btn.disabled = true;
-  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Processing...`;
 
   try {
-    const insertPayload = names.map(n => ({ name: n }));
-    const { data, error } = await db
-      .from('players')
-      .insert(insertPayload)
-      .select();
+    let addedCount = 0;
 
-    if (error) throw error;
+    for (let name of newNames) {
+      const { data: existingDbPlayers } = await db.from('players').select('*').ilike('name', name);
+      const exactMatch = existingDbPlayers ? existingDbPlayers.find(p => p.name.trim().toLowerCase() === name.toLowerCase()) : null;
 
-    data.forEach(p => addPlayerToRoster(p.name, p.playerid, false));
+      if (exactMatch) {
+        addPlayerToRoster(exactMatch.name, exactMatch.playerid, false);
+        addedCount++;
+      } else {
+        const { data: newData } = await db.from('players').insert([{ name: name }]).select();
+        if (newData && newData.length > 0) {
+          addPlayerToRoster(newData[0].name, newData[0].playerid, false);
+          addedCount++;
+        }
+      }
+    }
 
+    showToast(`Successfully added ${addedCount} player(s) to roster!`, "success");
     clearMultiLineText();
+
     const singleTab = new bootstrap.Tab(document.getElementById('single-tab'));
     singleTab.show();
 
   } catch (err) {
     console.error("Failed bulk player insert:", err);
-    alert("Error saving bulk players to database: " + err.message);
+    showToast("Error saving bulk players: " + err.message, "danger");
   } finally {
     btn.disabled = false;
     btn.textContent = 'Add All To Roster';
@@ -307,54 +419,83 @@ async function addMultiLinePlayers() {
 // -------------------------------------------------------------
 // ROSTER MANAGEMENT
 // -------------------------------------------------------------
-function addPlayerToRoster(name, playerId, isNew = false) {
-  const exists = currentRoster.some(p => p.playerid === playerId || p.name.toLowerCase() === name.toLowerCase());
-  if (exists) return;
+function addPlayerToRoster(name, playerId, showNotification = true) {
+  const cleanName = name.trim();
+
+  // Check if player is already in roster
+  const exists = currentRoster.some(p => {
+    const sameId = playerId && p.playerid && String(p.playerid) === String(playerId);
+    const sameName = p.name.trim().toLowerCase() === cleanName.toLowerCase();
+    return sameId || sameName;
+  });
+
+  if (exists) {
+    showToast(`"${cleanName}" is already added to the roster!`, "warning");
+    return false;
+  }
 
   currentRoster.push({
     playerid: playerId,
-    name: name,
-    isNew: isNew
+    name: cleanName
   });
 
   renderRoster();
+
+  if (showNotification) {
+    showToast(`Added "${cleanName}" to roster.`, "success");
+  }
+
+  return true;
 }
 
 function removePlayerFromRoster(index) {
+  const removedPlayer = currentRoster[index];
   currentRoster.splice(index, 1);
   renderRoster();
+  showToast(`Removed "${removedPlayer.name}" from roster.`, "info");
 }
 
 function confirmClearRoster() {
   if (currentRoster.length > 0) {
-    clearRosterModalInstance.show();
+    const modalEl = document.getElementById('clearRosterModal');
+    const modalInstance = bootstrap.Modal.getInstance(modalEl) || clearRosterModalInstance;
+    if (modalInstance) {
+      modalInstance.show();
+    }
   }
 }
 
 function executeClearRoster() {
   currentRoster = [];
   renderRoster();
-  clearRosterModalInstance.hide();
+
+  // Close modal reliably
+  const modalEl = document.getElementById('clearRosterModal');
+  const modalInstance = bootstrap.Modal.getInstance(modalEl) || clearRosterModalInstance;
+  if (modalInstance) {
+    modalInstance.hide();
+  }
+
+  showToast("Roster cleared.", "info");
 }
 
+// ROSTER RENDERING - Safe DOM Construction
 function renderRoster() {
   const container = document.getElementById('rosterContainer');
-  const emptyText = document.getElementById('emptyRosterText');
   const badge = document.getElementById('rosterCountBadge');
   const clearBtn = document.getElementById('clearRosterBtn');
+
+  if (!container) return;
 
   badge.textContent = `${currentRoster.length} Player${currentRoster.length === 1 ? '' : 's'} in Roster`;
 
   if (currentRoster.length === 0) {
-    container.innerHTML = '';
-    container.appendChild(emptyText);
-    emptyText.classList.remove('d-none');
-    clearBtn.classList.add('d-none');
+    container.innerHTML = `<span class="text-muted small italic w-100 text-center" id="emptyRosterText">No players added to the roster yet.</span>`;
+    if (clearBtn) clearBtn.classList.add('d-none');
     return;
   }
 
-  emptyText.classList.add('d-none');
-  clearBtn.classList.remove('d-none');
+  if (clearBtn) clearBtn.classList.remove('d-none');
   container.innerHTML = '';
 
   currentRoster.forEach((player, idx) => {
@@ -382,12 +523,12 @@ async function startNewSession() {
   const startBtn = document.getElementById('startSessionBtn');
 
   if (!gameName || !gameTypeId) {
-    alert("Please complete all session details.");
+    showToast("Please enter a session name and choose a game type.", "warning");
     return;
   }
 
   if (currentRoster.length === 0) {
-    alert("Please add at least one player to the roster before starting.");
+    showToast("Please add at least one player to the roster before starting.", "warning");
     return;
   }
 
@@ -414,7 +555,7 @@ async function startNewSession() {
       }
     }
 
-    alert(`Session "${gameName}" started successfully! Game ID: ${newGameId}`);
+    showToast(`Session "${gameName}" started! Game ID: ${newGameId}`, "success");
     
     currentRoster = [];
     renderRoster();
@@ -422,7 +563,7 @@ async function startNewSession() {
 
   } catch (err) {
     console.error("Error starting session:", err);
-    alert("Failed to start session: " + err.message);
+    showToast("Failed to start session: " + err.message, "danger");
   } finally {
     startBtn.disabled = false;
     startBtn.innerHTML = `<i class="bi bi-play-circle-fill me-2"></i>Start Matchmaking Session`;
@@ -431,7 +572,7 @@ async function startNewSession() {
 
 // Utility
 function escapeHtml(str) {
-  return str.replace(/[&<>"']/g, function(m) {
+  return String(str).replace(/[&<>"']/g, function(m) {
     return {
       '&': '&amp;',
       '<': '&lt;',
