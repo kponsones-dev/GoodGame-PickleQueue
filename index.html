@@ -12,123 +12,108 @@
   <!-- Page-Specific CSS -->
   <link href="css/index.css" rel="stylesheet">
 </head>
-<body class="py-4 py-md-5">
+<body>
 
-  <div class="container" style="max-width: 800px;">
-    
-    <!-- Header -->
-    <header class="d-flex justify-content-between align-items-center mb-4">
-      <div class="d-flex align-items-center gap-2">
-        <i class="bi bi-dribbble text-primary fs-2"></i>
-        <h1 class="h3 mb-0 fw-bold">PickleQueue</h1>
-      </div>
-      <div id="dbConnectionStatus" class="badge bg-secondary db-badge px-2 py-1">
-        <i class="bi bi-plug-fill me-1"></i>Connecting...
-      </div>
-    </header>
+  <!-- Main Setup Form Card (Wrapped dynamically by js/layout.js) -->
+  <main class="card mb-4 shadow-sm border-0">
+    <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+      <h2 class="h5 mb-0 fw-semibold text-secondary">Start New Game Session</h2>
+      <span class="badge bg-light text-dark border" id="rosterCountBadge">0 Players in Roster</span>
+    </div>
 
-    <!-- Main Setup Form Card -->
-    <main class="card mb-4">
-      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
-        <h2 class="h5 mb-0 fw-semibold text-secondary">Start New Game Session</h2>
-        <span class="badge bg-light text-dark border" id="rosterCountBadge">0 Players in Roster</span>
-      </div>
+    <div class="card-body p-4">
+      <form id="sessionForm" onsubmit="event.preventDefault(); startNewSession();">
+        
+        <!-- 1. Game Session Textbox -->
+        <div class="mb-4">
+          <label for="gameNameInput" class="form-label fw-medium">Game Session Name</label>
+          <input type="text" class="form-control form-control-lg" id="gameNameInput" placeholder="e.g., Friday Night Open Play" required>
+        </div>
 
-      <div class="card-body p-4">
-        <form id="sessionForm" onsubmit="event.preventDefault(); startNewSession();">
-          
-          <!-- 1. Game Session Textbox -->
-          <div class="mb-4">
-            <label for="gameNameInput" class="form-label fw-medium">Game Session Name</label>
-            <input type="text" class="form-control form-control-lg" id="gameNameInput" placeholder="e.g., Friday Night Open Play" required>
-          </div>
+        <!-- 2. Game Type Dropdown -->
+        <div class="mb-4">
+          <label for="gameTypeSelect" class="form-label fw-medium">Game Type</label>
+          <select class="form-select form-select-lg" id="gameTypeSelect" required>
+            <option value="" disabled selected>Loading game types from database...</option>
+          </select>
+          <!-- Game Type Description Placeholder -->
+          <div id="gameTypeDescription" class="form-text text-muted mt-1 small" style="display: none;"></div>
+        </div>
 
-          <!-- 2. Game Type Dropdown -->
-          <div class="mb-4">
-            <label for="gameTypeSelect" class="form-label fw-medium">Game Type</label>
-            <select class="form-select form-select-lg" id="gameTypeSelect" required>
-              <option value="" disabled selected>Loading game types from database...</option>
-            </select>
-            <!-- Game Type Description Placeholder -->
-            <div id="gameTypeDescription" class="form-text text-muted mt-1 small" style="display: none;"></div>
-          </div>
+        <!-- 3. Player Roster Entry -->
+        <div class="mb-4">
+          <label class="form-label fw-medium d-flex justify-content-between align-items-center">
+            <span>Add Players to Roster</span>
+          </label>
 
-          <!-- 3. Player Roster Entry -->
-          <div class="mb-4">
-            <label class="form-label fw-medium d-flex justify-content-between align-items-center">
-              <span>Add Players to Roster</span>
-            </label>
-
-            <!-- Navigation Tabs -->
-            <ul class="nav nav-tabs nav-fill mb-3" id="playerEntryTabs" role="tablist">
-              <li class="nav-item" role="presentation">
-                <button class="nav-link active fw-medium" id="single-tab" data-bs-toggle="tab" data-bs-target="#single-pane" type="button" role="tab">
-                  <i class="bi bi-search me-1"></i> Single Player Search
-                </button>
-              </li>
-              <li class="nav-item" role="presentation">
-                <button class="nav-link fw-medium" id="multi-tab" data-bs-toggle="tab" data-bs-target="#multi-pane" type="button" role="tab">
-                  <i class="bi bi-card-text me-1"></i> Bulk Multi-Line Entry
-                </button>
-              </li>
-            </ul>
-
-            <div class="tab-content" id="playerEntryTabContent">
-              
-              <!-- TAB 1: Single Player Search -->
-              <div class="tab-pane fade show active" id="single-pane" role="tabpanel">
-                <div class="position-relative">
-                  <div class="input-group">
-                    <input type="text" id="singlePlayerInput" class="form-control" placeholder="Search existing player or type new name..." autocomplete="off" onkeydown="if(event.key === 'Enter'){ event.preventDefault(); addSinglePlayerFromInput(); }">
-                    <button type="button" id="addSinglePlayerBtn" class="btn btn-outline-primary fw-medium" onclick="addSinglePlayerFromInput()">
-                      <i class="bi bi-plus-lg me-1"></i> Add New Player
-                    </button>
-                  </div>
-                  <div id="autocompleteDropdown" class="autocomplete-dropdown list-group d-none bg-white border"></div>
-                </div>
-                <div class="form-text mt-1 text-muted">
-                  <i class="bi bi-info-circle me-1"></i>Select from dropdown to add existing player, or click "Add New Player" (or press Enter) to create.
-                </div>
-              </div>
-
-              <!-- TAB 2: Bulk Multi-Line Entry -->
-              <div class="tab-pane fade" id="multi-pane" role="tabpanel">
-                <textarea class="form-control font-monospace" id="multiPlayerInput" rows="5" placeholder="Enter player names (one per line):&#10;Alice Smith&#10;Bob Johnson&#10;Charlie Brown" oninput="updateMultiLineCounter()"></textarea>
-                <div class="d-flex justify-content-between align-items-center mt-2">
-                  <span class="text-muted small" id="multiLineCounter">0 names detected</span>
-                  <div>
-                    <button type="button" class="btn btn-sm btn-outline-secondary me-2" onclick="clearMultiLineText()">Clear Input</button>
-                    <button type="button" id="addMultiPlayerBtn" class="btn btn-sm btn-primary" onclick="addMultiLinePlayers()">Add All To Roster</button>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          <!-- Roster Chip Container -->
-          <div class="mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <span class="fw-medium text-dark">Current Queue Roster</span>
-              <button type="button" class="btn btn-link btn-sm text-danger text-decoration-none p-0 d-none" id="clearRosterBtn" onclick="confirmClearRoster()">
-                <i class="bi bi-trash me-1"></i>Clear Roster
+          <!-- Navigation Tabs -->
+          <ul class="nav nav-tabs nav-fill mb-3" id="playerEntryTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active fw-medium" id="single-tab" data-bs-toggle="tab" data-bs-target="#single-pane" type="button" role="tab">
+                <i class="bi bi-search me-1"></i> Single Player Search
               </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-medium" id="multi-tab" data-bs-toggle="tab" data-bs-target="#multi-pane" type="button" role="tab">
+                <i class="bi bi-card-text me-1"></i> Bulk Multi-Line Entry
+              </button>
+            </li>
+          </ul>
+
+          <div class="tab-content" id="playerEntryTabContent">
+            
+            <!-- TAB 1: Single Player Search -->
+            <div class="tab-pane fade show active" id="single-pane" role="tabpanel">
+              <div class="position-relative">
+                <div class="input-group">
+                  <input type="text" id="singlePlayerInput" class="form-control" placeholder="Search existing player or type new name..." autocomplete="off" onkeydown="if(event.key === 'Enter'){ event.preventDefault(); addSinglePlayerFromInput(); }">
+                  <button type="button" id="addSinglePlayerBtn" class="btn btn-outline-primary fw-medium" onclick="addSinglePlayerFromInput()">
+                    <i class="bi bi-plus-lg me-1"></i> Add New Player
+                  </button>
+                </div>
+                <div id="autocompleteDropdown" class="autocomplete-dropdown list-group d-none bg-white border position-absolute w-100 shadow-sm" style="z-index: 1000;"></div>
+              </div>
+              <div class="form-text mt-1 text-muted">
+                <i class="bi bi-info-circle me-1"></i>Select from dropdown to add existing player, or click "Add New Player" (or press Enter) to create.
+              </div>
             </div>
 
-            <div id="rosterContainer" class="p-3 bg-light rounded border d-flex flex-wrap gap-2 align-items-center" style="min-height: 80px;">
-              <!-- Dynamically populated by JavaScript -->
+            <!-- TAB 2: Bulk Multi-Line Entry -->
+            <div class="tab-pane fade" id="multi-pane" role="tabpanel">
+              <textarea class="form-control font-monospace" id="multiPlayerInput" rows="5" placeholder="Enter player names (one per line):&#10;Alice Smith&#10;Bob Johnson&#10;Charlie Brown" oninput="updateMultiLineCounter()"></textarea>
+              <div class="d-flex justify-content-between align-items-center mt-2">
+                <span class="text-muted small" id="multiLineCounter">0 names detected</span>
+                <div>
+                  <button type="button" class="btn btn-sm btn-outline-secondary me-2" onclick="clearMultiLineText()">Clear Input</button>
+                  <button type="button" id="addMultiPlayerBtn" class="btn btn-sm btn-primary" onclick="addMultiLinePlayers()">Add All To Roster</button>
+                </div>
+              </div>
             </div>
+
+          </div>
+        </div>
+
+        <!-- Roster Chip Container -->
+        <div class="mb-4">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-medium text-dark">Current Queue Roster</span>
+            <button type="button" class="btn btn-link btn-sm text-danger text-decoration-none p-0 d-none" id="clearRosterBtn" onclick="confirmClearRoster()">
+              <i class="bi bi-trash me-1"></i>Clear Roster
+            </button>
           </div>
 
-          <!-- Submit Button -->
-          <button type="submit" id="startSessionBtn" class="btn btn-primary btn-lg w-100 fw-bold py-3">
-            <i class="bi bi-play-circle-fill me-2"></i>Start Matchmaking Session
-          </button>
-        </form>
-      </div>
-    </main>
+          <div id="rosterContainer" class="p-3 bg-light rounded border d-flex flex-wrap gap-2 align-items-center" style="min-height: 80px;">
+            <!-- Dynamically populated by JavaScript -->
+          </div>
+        </div>
 
-  </div>
+        <!-- Submit Button -->
+        <button type="submit" id="startSessionBtn" class="btn btn-primary btn-lg w-100 fw-bold py-3">
+          <i class="bi bi-play-circle-fill me-2"></i>Start Matchmaking Session
+        </button>
+      </form>
+    </div>
+  </main>
 
   <!-- Edit Player Modal -->
   <div class="modal fade" id="editPlayerModal" tabindex="-1" aria-labelledby="editPlayerModalLabel" aria-hidden="true">
@@ -248,6 +233,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
   <!-- App JS Files -->
+  <script src="js/layout.js"></script>
   <script src="js/db.js"></script>
   <script src="js/ratings.js"></script>
   <script src="js/gametypes.js"></script>
