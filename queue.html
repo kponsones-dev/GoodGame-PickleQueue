@@ -25,11 +25,17 @@
       <div class="card shadow-sm bg-white border-0">
         <div class="card-body p-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
           <div>
-            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary px-2 py-1 mb-2">Active Session</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+              <span class="badge bg-primary bg-opacity-10 text-primary border border-primary px-2 py-1">Active Session</span>
+              <!-- Matchmaking Mode Display -->
+              <span id="sessionTypeBadge" class="badge bg-info bg-opacity-10 text-info border border-info px-2 py-1">
+                <i class="bi bi-controller me-1"></i> Mode: Loading...
+              </span>
+            </div>
             <h2 id="sessionTitleDisplay" class="h4 fw-bold text-dark mb-1">Loading Session...</h2>
-            <p class="text-muted small mb-0">Manage session players pool, active queue, and generate automated or manual matches.</p>
+            <p class="text-muted small mb-0">Manage session players pool, active courts, queue, and generate matches.</p>
           </div>
-          <div>
+          <div class="d-flex align-items-center gap-2">
             <button class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" onclick="endCurrentSession()">
               <i class="bi bi-stop-circle-fill"></i> End Session
             </button>
@@ -38,7 +44,26 @@
       </div>
     </div>
 
-    <!-- Top Section: Match Generation -->
+    <!-- Courts Setup Section -->
+    <div class="col-12">
+      <div class="card shadow-sm bg-white border-0">
+        <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+          <h5 class="fw-bold m-0 text-dark d-flex align-items-center gap-2">
+            <i class="bi bi-bounding-box-circles text-primary"></i> Session Courts
+          </h5>
+          <button class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" data-bs-toggle="modal" data-bs-target="#addCourtModal">
+            <i class="bi bi-plus-lg"></i> Add Court
+          </button>
+        </div>
+        <div class="card-body p-4">
+          <div id="courtsContainer" class="row g-3">
+            <div class="col-12 text-center py-3 text-muted small">Loading session courts...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Match Generation Section -->
     <div class="col-12">
       <div class="card shadow-sm bg-white border-0">
         <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
@@ -53,13 +78,13 @@
           <div id="matchesResultContainer" class="text-center py-5 text-muted">
             <i class="bi bi-diagram-3 fs-1 text-secondary opacity-50 mb-2 d-block"></i>
             <p class="mb-1 fw-semibold">No matches generated yet.</p>
-            <p class="small text-muted">Click "Generate Matches" to create balanced matchups from the queue pool.</p>
+            <p class="small text-muted">Click "Generate Matches" to create balanced matchups for available courts.</p>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Bottom Section: Session Players Pool -->
+    <!-- Session Players Pool -->
     <div class="col-12">
       <div class="card shadow-sm bg-white border-0">
         <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-bottom">
@@ -91,7 +116,6 @@
             </ul>
 
             <div class="tab-content" id="playerEntryTabContent">
-              
               <!-- TAB 1: Single Player Search -->
               <div class="tab-pane fade show active" id="single-pane" role="tabpanel">
                 <div class="position-relative">
@@ -119,7 +143,6 @@
                   </div>
                 </div>
               </div>
-
             </div>
           </div>
 
@@ -133,15 +156,59 @@
             </div>
 
             <div id="rosterContainer" class="p-3 bg-light rounded border d-flex flex-wrap gap-2 align-items-center" style="min-height: 120px;">
-              <!-- Dynamically populated by JavaScript -->
               <span class="text-muted small italic w-100 text-center">Loading session players...</span>
             </div>
           </div>
-
         </div>
       </div>
     </div>
 
+    <!-- Checked Out Players List -->
+    <div class="col-12">
+      <div class="card shadow-sm bg-white border-0">
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-bottom">
+          <h5 class="fw-bold m-0 text-dark d-flex align-items-center gap-2">
+            <i class="bi bi-person-dash-fill text-secondary"></i> Checked Out Players
+          </h5>
+          <span class="badge bg-secondary bg-opacity-10 text-secondary border" id="checkedOutPlayerCountBadge">0 Players</span>
+        </div>
+
+        <div class="card-body p-4">
+          <div id="checkedOutContainer" class="d-flex flex-column gap-2">
+            <span class="text-muted small italic text-center py-3">No checked out players.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Add Court Modal -->
+  <div class="modal fade" id="addCourtModal" tabindex="-1" aria-labelledby="addCourtModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-dark" id="addCourtModalLabel">
+            <i class="bi bi-bounding-box-circles text-primary me-2"></i>Add Session Court
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body py-3">
+          <form id="addCourtForm" onsubmit="event.preventDefault(); handleAddCourt();">
+            <div class="mb-3">
+              <label for="courtNameInput" class="form-label fw-medium">Court Name / Number</label>
+              <input type="text" class="form-control" id="courtNameInput" placeholder="e.g. Court 1 or Indoor A" required>
+            </div>
+            <div class="modal-footer px-0 pb-0 pt-3 border-top">
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-sm btn-primary fw-medium" id="saveCourtBtn">
+                <i class="bi bi-plus-lg me-1"></i>Add Court
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Edit Player Modal -->
@@ -158,13 +225,11 @@
           <form id="editPlayerForm" onsubmit="event.preventDefault(); savePlayerEdit();">
             <input type="hidden" id="editPlayerIndex">
             
-            <!-- Name Field -->
             <div class="mb-3">
               <label for="editPlayerName" class="form-label fw-medium">Player Name</label>
               <input type="text" class="form-control" id="editPlayerName" placeholder="Enter player name" required>
             </div>
 
-            <!-- Pickleball Rating (6-Star Selector) -->
             <div class="mb-3">
               <label class="form-label fw-medium d-block">Pickleball Skill Rating</label>
               <div class="d-flex align-items-center gap-2 mb-2" id="starRatingContainer">
@@ -181,7 +246,6 @@
               </div>
             </div>
 
-            <!-- Gender Field (Male / Female) -->
             <div class="mb-3">
               <label for="editPlayerGender" class="form-label fw-medium">Gender</label>
               <select class="form-select" id="editPlayerGender">

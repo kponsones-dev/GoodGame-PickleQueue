@@ -1,6 +1,7 @@
 // Players Page State
 let allPlayers = [];
 let activeSessionId = null; // Store active session if one exists
+let activeMatchPlayerIds = new Set(); // Store player IDs currently in an active match
 let playerModalInstance = null;
 let historyModalInstance = null;
 let deleteModalInstance = null;
@@ -12,10 +13,49 @@ document.addEventListener("DOMContentLoaded", async () => {
   historyModalInstance = new bootstrap.Modal(document.getElementById('historyModal'));
   deleteModalInstance = new bootstrap.Modal(document.getElementById('deleteModal'));
 
+  setupStarRatingListeners();
+
   await checkDbConnection();
-  await fetchActiveSession(); // Find the current active game session first
+  await fetchActiveSession(); // Find current active session
+  await fetchActiveMatches(); // Find players currently in an active match
   await loadPlayers();
 });
+
+// Setup Star Rating Click and Hover Listeners
+function setupStarRatingListeners() {
+  const container = document.getElementById('starRatingContainer');
+  if (!container) return;
+
+  const stars = container.querySelectorAll('.style-star');
+  stars.forEach((star, index) => {
+    const starValue = index + 1;
+
+    star.addEventListener('click', () => {
+      setStarRating(starValue);
+    });
+
+    star.addEventListener('mouseenter', () => {
+      stars.forEach((s, i) => {
+        if (i < starValue) {
+          s.classList.remove('bi-star');
+          s.classList.add('bi-star-fill');
+        } else {
+          s.classList.remove('bi-star-fill');
+          s.classList.add('bi-star');
+        }
+      });
+    });
+  });
+
+  container.addEventListener('mouseleave', () => {
+    const currentRating = document.getElementById('modalRatingId').value;
+    if (currentRating) {
+      setStarRating(parseInt(currentRating, 10));
+    } else {
+      resetStarRating();
+    }
+  });
+}
 
 // Fetch current active session (where enddatetime is null)
 async function fetchActiveSession() {
@@ -33,6 +73,33 @@ async function fetchActiveSession() {
     }
   } catch (err) {
     console.error("Error fetching active session:", err);
+  }
+}
+
+// Fetch player IDs who are currently in an active match (EndDateTime IS NULL)
+async function fetchActiveMatches() {
+  try {
+    activeMatchPlayerIds.clear();
+    const { data, error } = await db
+      .from('match')
+      .select('matchid, playermatch(playerid)')
+      .is('enddatetime', null);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      data.forEach(m => {
+        if (m.playermatch && Array.isArray(m.playermatch)) {
+          m.playermatch.forEach(pm => {
+            if (pm.playerid) {
+              activeMatchPlayerIds.add(pm.playerid);
+            }
+          });
+        }
+      });
+    }
+  } catch (err) {
+    console.error("Error fetching active match players:", err);
   }
 }
 
@@ -82,12 +149,109 @@ async function loadPlayers() {
     if (error) throw error;
 
     allPlayers = data || [];
-    subtitle.textContent = `${allPlayers.length} total registered player(s)`;
-    renderPlayerTable(allPlayers);
+    
+    updateMetricsAndFilter();
   } catch (err) {
     console.error("Failed to load players:", err);
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Error loading players: ${escapeHtml(err.message)}</td></tr>`;
+    if (subtitle) subtitle.textContent = `Error loading players`;
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Error loading players: ${escapeHtml(err.message)}</td></tr>`;
+    }
   }
+}
+
+/**
+ * Determine Player Status Key based on business rules:
+ * 1. Checked IN: currentGameId NOT NULL, is_checked_in is TRUE, NOT in an active match
+ * 2. Checked Out: currentGameId NOT NULL, is_checked_in is FALSE
+ * 3. Available: currentGameId is NULL, is_checked_in is FALSE
+ * 4. IN-MATCH: currentGameId NOT NULL, is_checked_in is TRUE, AND IS CURRENTLY IN AN ACTIVE MATCH
+ */
+function getPlayerStatusKey(player) {
+  const isCheckedIn = player.is_checked_in === true || player.ischeckedin === true;
+  const currentGameId = player.currentgameid;
+  const hasGame = currentGameId !== null && currentGameId !== undefined;
+  const isInActiveMatch = activeMatchPlayerIds.has(player.playerid);
+
+  // Requirement 3: Available if currentGameId NULL and IS_CHECKED_IN IS FALSE
+  if (!hasGame && !isCheckedIn) {
+    return 'available';
+  }
+
+  // Requirement 2: Checked Out if currentGameId NOT NULL and IS_CHECKED_IN IS FALSE
+  if (hasGame && !isCheckedIn) {
+    return 'checked_out';
+  }
+
+  // When currentGameId is NOT NULL and IS_CHECKED_IN is TRUE
+  if (hasGame && isCheckedIn) {
+    // Requirement 5: IN-MATCH if currently in an active match
+    if (isInActiveMatch) {
+      return 'in_match';
+    }
+    // Requirement 1: Checked IN if not in an active match
+    return 'checked_in';
+  }
+
+  return 'available';
+}
+
+// Calculate Metrics, Update Cards, and Filter Table
+function filterPlayerTable() {
+  updateMetricsAndFilter();
+}
+
+function updateMetricsAndFilter() {
+  const query = document.getElementById('playerSearchInput').value.toLowerCase().trim();
+  const statusFilter = document.getElementById('statusFilterSelect').value;
+  const subtitle = document.getElementById('playerCountSubtitle');
+
+  let counts = {
+    total: allPlayers.length,
+    available: 0,
+    checked_in: 0,
+    in_match: 0,
+    checked_out: 0
+  };
+
+  allPlayers.forEach(p => {
+    const key = getPlayerStatusKey(p);
+    if (counts[key] !== undefined) {
+      counts[key]++;
+    }
+  });
+
+  // Update Metric Cards DOM
+  const cntTotal = document.getElementById('cntTotal');
+  const cntAvailable = document.getElementById('cntAvailable');
+  const cntCheckedIn = document.getElementById('cntCheckedIn');
+  const cntInMatch = document.getElementById('cntInGame') || document.getElementById('cntInMatch');
+  const cntCheckedOut = document.getElementById('cntCheckedOut');
+
+  if (cntTotal) cntTotal.textContent = counts.total;
+  if (cntAvailable) cntAvailable.textContent = counts.available;
+  if (cntCheckedIn) cntCheckedIn.textContent = counts.checked_in;
+  if (cntInMatch) cntInMatch.textContent = counts.in_match;
+  if (cntCheckedOut) cntCheckedOut.textContent = counts.checked_out;
+
+  // Filter players based on search query and status dropdown
+  const filtered = allPlayers.filter(p => {
+    const matchesName = p.name.toLowerCase().includes(query);
+    const key = getPlayerStatusKey(p);
+    // Support legacy dropdown value 'in_game' mapped to 'in_match'
+    const matchesStatus = (statusFilter === 'all' || key === statusFilter || (statusFilter === 'in_game' && key === 'in_match'));
+    return matchesName && matchesStatus;
+  });
+
+  if (subtitle) {
+    if (query || statusFilter !== 'all') {
+      subtitle.textContent = `Showing ${filtered.length} of ${allPlayers.length} registered player(s)`;
+    } else {
+      subtitle.textContent = `${allPlayers.length} total registered player(s)`;
+    }
+  }
+
+  renderPlayerTable(filtered);
 }
 
 // Render Table
@@ -96,7 +260,7 @@ function renderPlayerTable(players) {
   if (!tbody) return;
 
   if (players.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">No players found in directory.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">No players found matching criteria.</td></tr>`;
     return;
   }
 
@@ -106,7 +270,7 @@ function renderPlayerTable(players) {
     const tr = document.createElement('tr');
 
     let ratingBadge = '<span class="text-muted small">Unassigned</span>';
-    if (player.ratingid && RATING_MAP[player.ratingid]) {
+    if (player.ratingid && typeof RATING_MAP !== 'undefined' && RATING_MAP[player.ratingid]) {
       ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning"><i class="bi bi-star-fill text-warning me-1"></i>${RATING_MAP[player.ratingid].value} (${RATING_MAP[player.ratingid].label})</span>`;
     }
 
@@ -115,19 +279,18 @@ function renderPlayerTable(players) {
       genderBadge = player.gender === 'F' ? '<span class="badge bg-info bg-opacity-10 text-info border border-info">Female (F)</span>' : '<span class="badge bg-primary bg-opacity-10 text-primary border border-primary">Male (M)</span>';
     }
 
+    const statusKey = getPlayerStatusKey(player);
     let statusBadge = '';
-    if (player.currentgameid === null || player.currentgameid === undefined) {
-      const hasHistoryInActiveSession = activeSessionId !== null;
-      if (hasHistoryInActiveSession) {
-        statusBadge = `<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary">Checked Out</span>`;
-      } else {
-        statusBadge = `<span class="badge bg-success bg-opacity-10 text-success border border-success">Available</span>`;
-      }
+    if (statusKey === 'available') {
+      statusBadge = `<span class="badge bg-success bg-opacity-10 text-success border border-success">Available</span>`;
+    } else if (statusKey === 'checked_out') {
+      statusBadge = `<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary">Checked Out</span>`;
+    } else if (statusKey === 'in_match') {
+      statusBadge = `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary">IN-MATCH</span>`;
     } else {
-      statusBadge = `<span class="badge bg-warning bg-opacity-10 text-dark border border-warning">Waiting</span>`;
+      statusBadge = `<span class="badge bg-warning bg-opacity-10 text-dark border border-warning">Checked In</span>`;
     }
 
-    // Pass only player.playerid to avoid quote-escaping issues in inline JS handlers
     tr.innerHTML = `
       <td class="ps-3 fw-semibold text-dark">
         <i class="bi bi-person-circle text-primary me-2"></i>${escapeHtml(player.name)}
@@ -154,13 +317,6 @@ function renderPlayerTable(players) {
   });
 }
 
-// Filter Table Search
-function filterPlayerTable() {
-  const query = document.getElementById('playerSearchInput').value.toLowerCase().trim();
-  const filtered = allPlayers.filter(p => p.name.toLowerCase().includes(query));
-  renderPlayerTable(filtered);
-}
-
 // Add/Edit Modal Handlers
 function openAddPlayerModal() {
   const tabsContainer = document.getElementById('playerEntryTabsContainer');
@@ -171,7 +327,6 @@ function openAddPlayerModal() {
   document.getElementById('modalPlayerName').value = '';
   document.getElementById('modalPlayerGender').value = '';
 
-  // Reset tab active state to Single Player tab
   const singleTab = document.getElementById('single-modal-tab');
   const singlePane = document.getElementById('single-modal-pane');
   const multiTab = document.getElementById('multi-modal-tab');
@@ -226,7 +381,8 @@ function openEditPlayerModal(playerId) {
 function updateMultiLineCounter() {
   const rawText = document.getElementById('multiPlayerInput').value;
   const names = parseLinesToNames(rawText);
-  document.getElementById('multiLineCounter').textContent = `${names.length} player name(s) detected`;
+  const counterEl = document.getElementById('multiLineCounter');
+  if (counterEl) counterEl.textContent = `${names.length} player name(s) detected`;
 }
 
 function parseLinesToNames(text) {
@@ -275,19 +431,16 @@ async function addMultiLinePlayers() {
   btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Processing...`;
 
   try {
-    let addedCount = 0;
+    const payload = newNames.map(name => ({
+      name: name,
+      ratingid: null,
+      gender: null
+    }));
 
-    for (let name of newNames) {
-      const { error } = await db
-        .from('players')
-        .insert([{ name: name, ratingid: null, gender: null }]);
+    const { error } = await db.from('players').insert(payload);
+    if (error) throw error;
 
-      if (!error) {
-        addedCount++;
-      }
-    }
-
-    showToast(`Successfully added ${addedCount} player(s) to directory!`, "success");
+    showToast(`Successfully added ${newNames.length} player(s) to directory!`, "success");
     clearMultiLineText();
     playerModalInstance.hide();
     await loadPlayers();
@@ -308,7 +461,8 @@ function resetStarRating() {
     s.classList.add('bi-star');
   });
   document.getElementById('modalRatingId').value = '';
-  document.getElementById('ratingValueBadge').textContent = 'Unassigned';
+  const badge = document.getElementById('ratingValueBadge');
+  if (badge) badge.textContent = 'Unassigned';
 }
 
 function setStarRating(starCount) {
@@ -323,9 +477,10 @@ function setStarRating(starCount) {
     }
   });
 
-  const ratingInfo = RATING_MAP[starCount] || { ratingid: null, label: "Unassigned" };
-  document.getElementById('modalRatingId').value = ratingInfo.ratingid || '';
-  document.getElementById('ratingValueBadge').textContent = ratingInfo.label;
+  const ratingInfo = (typeof RATING_MAP !== 'undefined' && RATING_MAP[starCount]) ? RATING_MAP[starCount] : { ratingid: starCount, label: `Level ${starCount}` };
+  document.getElementById('modalRatingId').value = ratingInfo.ratingid || starCount;
+  const badge = document.getElementById('ratingValueBadge');
+  if (badge) badge.textContent = ratingInfo.label;
 }
 
 async function savePlayerRecord() {
@@ -410,7 +565,6 @@ async function openHistoryModal(playerId) {
   const historicalMatchesContainer = document.getElementById('historicalMatchesContainer');
   const matchDetailTabItem = document.getElementById('matchDetailTabItem');
 
-  // Hide the match detail tab initially when opening fresh
   if (matchDetailTabItem) matchDetailTabItem.style.display = 'none';
 
   if (currentMatchContainer) {
@@ -420,7 +574,6 @@ async function openHistoryModal(playerId) {
     historicalMatchesContainer.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading historical matches...</div>`;
   }
   
-  // Reset tabs to default first tab (Current Match)
   const currentMatchTab = document.getElementById('current-match-tab');
   const currentMatchPane = document.getElementById('current-match-pane');
   const historicalMatchesTab = document.getElementById('historical-matches-tab');
@@ -438,7 +591,6 @@ async function openHistoryModal(playerId) {
   historyModalInstance.show();
 
   try {
-    // 1. Load Current Match
     if (playerRecord && playerRecord.currentgameid) {
       const { data: gameData, error: gameError } = await db.from('game').select('*').eq('gameid', playerRecord.currentgameid).single();
       
@@ -458,26 +610,17 @@ async function openHistoryModal(playerId) {
       currentMatchContainer.innerHTML = `
         <div class="text-center py-4 text-muted">
           <i class="bi bi-inbox fs-2 d-block mb-2"></i>
-          Player is not currently assigned to an active match.
+          Player is not currently assigned to an active session.
         </div>
       `;
     }
 
-    // 2. Load Historical Matches
     const { data: historyData, error: historyError } = await db
-      .from('queue')
-      .select('*, game(gameid, gamename, startdatetime, enddatetime)')
-      .eq('playerid', playerId)
-      .order('queueid', { ascending: false });
+      .from('playermatch')
+      .select('*, match(*, game(gameid, gamename, startdatetime))')
+      .eq('playerid', playerId);
 
-    if (historyError) {
-      historicalMatchesContainer.innerHTML = `
-        <div class="text-center py-4 text-muted">
-          <i class="bi bi-journal-x fs-2 d-block mb-2"></i>
-          No historical match records found.
-        </div>
-      `;
-    } else if (!historyData || historyData.length === 0) {
+    if (historyError || !historyData || historyData.length === 0) {
       historicalMatchesContainer.innerHTML = `
         <div class="text-center py-4 text-muted">
           <i class="bi bi-journal-check fs-2 d-block mb-2"></i>
@@ -490,7 +633,7 @@ async function openHistoryModal(playerId) {
           <table class="table table-sm table-hover align-middle mb-0">
             <thead class="table-light text-uppercase fs-7 text-muted">
               <tr>
-                <th class="ps-3">Game Name</th>
+                <th class="ps-3">Game / Match</th>
                 <th>Status</th>
                 <th class="text-end pe-3">Date / Time</th>
               </tr>
@@ -499,14 +642,17 @@ async function openHistoryModal(playerId) {
       `;
 
       historyData.forEach(item => {
-        const gameId = item.game && item.game.gameid ? item.game.gameid : item.gameid;
-        const gameName = item.game && item.game.gamename ? item.game.gamename : 'Game #' + gameId;
-        const dateTime = item.game && item.game.startdatetime ? new Date(item.game.startdatetime).toLocaleString() : '--';
+        const matchObj = item.match || {};
+        const gameObj = matchObj.game || {};
+        const gameId = gameObj.gameid || matchObj.gameid || '--';
+        const gameName = gameObj.gamename || ('Match #' + (matchObj.matchid || item.matchid));
+        const dateTime = matchObj.startdatetime ? new Date(matchObj.startdatetime).toLocaleString() : '--';
+        const escapedGameName = escapeHtml(gameName).replace(/'/g, "\\&#39;").replace(/"/g, "&quot;");
 
         historyHtml += `
           <tr>
             <td class="ps-3 fw-medium">
-              <a href="#" class="text-primary text-decoration-none fw-semibold" onclick="openMatchParticipants(${gameId}, '${escapeHtml(gameName).replace(/'/g, "\\&#39;")}'); return false;">
+              <a href="#" class="text-primary text-decoration-none fw-semibold" onclick="openMatchParticipants(${gameId}, '${escapedGameName}'); return false;">
                 <i class="bi bi-link-45deg me-1"></i>${escapeHtml(gameName)}
               </a>
             </td>
@@ -537,12 +683,13 @@ async function openMatchParticipants(gameId, gameName) {
   const tabItem = document.getElementById('matchDetailTabItem');
   const tabTitle = document.getElementById('matchDetailTabTitle');
 
-  tabTitle.textContent = gameName;
+  if (tabTitle) tabTitle.textContent = gameName;
   if (tabItem) tabItem.style.display = 'block';
   
-  container.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading participants for ${escapeHtml(gameName)}...</div>`;
+  if (container) {
+    container.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading participants for ${escapeHtml(gameName)}...</div>`;
+  }
 
-  // Explicitly activate match detail tab and pane
   const matchDetailTab = document.getElementById('match-detail-tab');
   const matchDetailPane = document.getElementById('match-detail-pane');
   const currentMatchTab = document.getElementById('current-match-tab');
@@ -559,19 +706,21 @@ async function openMatchParticipants(gameId, gameName) {
 
   try {
     const { data: participants, error } = await db
-      .from('queue')
-      .select('*, players(playerid, name, ratingid, gender)')
-      .eq('gameid', gameId);
+      .from('playermatch')
+      .select('*, match!inner(*), players(playerid, name, ratingid, gender)')
+      .eq('match.gameid', gameId);
 
     if (error) throw error;
 
     if (!participants || participants.length === 0) {
-      container.innerHTML = `
-        <div class="text-center py-4 text-muted">
-          <i class="bi bi-people fs-2 d-block mb-2"></i>
-          No participant history found for this game session.
-        </div>
-      `;
+      if (container) {
+        container.innerHTML = `
+          <div class="text-center py-4 text-muted">
+            <i class="bi bi-people fs-2 d-block mb-2"></i>
+            No participant history found for this game session.
+          </div>
+        `;
+      }
       return;
     }
 
@@ -597,7 +746,7 @@ async function openMatchParticipants(gameId, gameName) {
       const pGender = p.players && p.players.gender ? p.players.gender : '';
 
       let ratingBadge = '<span class="text-muted small">Unassigned</span>';
-      if (pRatingId && RATING_MAP[pRatingId]) {
+      if (pRatingId && typeof RATING_MAP !== 'undefined' && RATING_MAP[pRatingId]) {
         ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning">${RATING_MAP[pRatingId].value} (${RATING_MAP[pRatingId].label})</span>`;
       }
 
@@ -620,11 +769,11 @@ async function openMatchParticipants(gameId, gameName) {
         </table>
       </div>
     `;
-    container.innerHTML = html;
+    if (container) container.innerHTML = html;
 
   } catch (err) {
     console.error("Error loading match participants:", err);
-    container.innerHTML = `<div class="text-danger small text-center py-3">Failed to load game participants.</div>`;
+    if (container) container.innerHTML = `<div class="text-danger small text-center py-3">Failed to load game participants.</div>`;
   }
 }
 
