@@ -1,0 +1,46 @@
+<div class="mb-4" id="addPlayerComponent">
+  <label class="form-label fw-medium d-flex justify-content-between align-items-center">
+    <span>Add Players</span>
+  </label>
+
+  <!-- Navigation Tabs -->
+  <ul class="nav nav-tabs nav-fill mb-3" id="playerEntryTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active fw-medium" id="single-tab" data-bs-toggle="tab" data-bs-target="#single-pane" type="button" role="tab">
+        <i class="bi bi-search me-1"></i> Single Player Search
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link fw-medium" id="multi-tab" data-bs-toggle="tab" data-bs-target="#multi-pane" type="button" role="tab">
+        <i class="bi bi-card-text me-1"></i> Bulk Multi-Line Entry
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="playerEntryTabContent">
+    <!-- TAB 1: Single Player Search -->
+    <div class="tab-pane fade show active" id="single-pane" role="tabpanel">
+      <div class="position-relative">
+        <div class="input-group">
+          <input type="text" id="singlePlayerInput" class="form-control" placeholder="Search existing player or type new name..." autocomplete="off">
+          <button type="button" id="addSinglePlayerBtn" class="btn btn-outline-primary fw-medium">
+            <i class="bi bi-plus-lg me-1"></i> Add Player
+          </button>
+        </div>
+        <div id="autocompleteDropdown" class="autocomplete-dropdown list-group d-none bg-white border position-absolute w-100 shadow-sm" style="z-index: 1000;"></div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Bulk Multi-Line Entry -->
+    <div class="tab-pane fade" id="multi-pane" role="tabpanel">
+      <textarea class="form-control font-monospace" id="multiPlayerInput" rows="4" placeholder="Enter player names (one per line)"></textarea>
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <span class="text-muted small" id="multiLineCounter">0 names detected</span>
+        <div>
+          <button type="button" class="btn btn-sm btn-outline-secondary me-2" onclick="clearMultiLineText()">Clear</button>
+          <button type="button" id="addMultiPlayerBtn" class="btn btn-sm btn-primary">Add All</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -127,10 +127,7 @@ function renderPlayerTable(players) {
       statusBadge = `<span class="badge bg-warning bg-opacity-10 text-dark border border-warning">Waiting</span>`;
     }
 
-    const escapedName = escapeHtml(player.name).replace(/'/g, "\\'");
-    const safeRating = player.ratingid !== null && player.ratingid !== undefined ? player.ratingid : '';
-    const safeGender = player.gender ? player.gender : '';
-
+    // Pass only player.playerid to avoid quote-escaping issues in inline JS handlers
     tr.innerHTML = `
       <td class="ps-3 fw-semibold text-dark">
         <i class="bi bi-person-circle text-primary me-2"></i>${escapeHtml(player.name)}
@@ -141,13 +138,13 @@ function renderPlayerTable(players) {
       <td>${statusBadge}</td>
       <td class="text-end pe-3">
         <div class="btn-group btn-group-sm" role="group">
-          <button type="button" class="btn btn-outline-secondary" title="View History" onclick="openHistoryModal(${player.playerid}, '${escapedName}')">
+          <button type="button" class="btn btn-outline-secondary" title="View History" onclick="openHistoryModal(${player.playerid})">
             <i class="bi bi-eye"></i>
           </button>
-          <button type="button" class="btn btn-outline-primary" title="Edit Player" onclick="openEditPlayerModal(${player.playerid}, '${escapedName}', '${safeRating}', '${safeGender}')">
+          <button type="button" class="btn btn-outline-primary" title="Edit Player" onclick="openEditPlayerModal(${player.playerid})">
             <i class="bi bi-pencil"></i>
           </button>
-          <button type="button" class="btn btn-outline-danger" title="Delete Player" onclick="openDeletePlayerModal(${player.playerid}, '${escapedName}')">
+          <button type="button" class="btn btn-outline-danger" title="Delete Player" onclick="openDeletePlayerModal(${player.playerid})">
             <i class="bi bi-trash"></i>
           </button>
         </div>
@@ -173,25 +170,38 @@ function openAddPlayerModal() {
   document.getElementById('modalPlayerId').value = '';
   document.getElementById('modalPlayerName').value = '';
   document.getElementById('modalPlayerGender').value = '';
-  
+
+  // Reset tab active state to Single Player tab
   const singleTab = document.getElementById('single-modal-tab');
-  if (singleTab) {
-    new bootstrap.Tab(singleTab).show();
-  }
+  const singlePane = document.getElementById('single-modal-pane');
+  const multiTab = document.getElementById('multi-modal-tab');
+  const multiPane = document.getElementById('multi-modal-pane');
+
+  if (singleTab) singleTab.classList.add('active');
+  if (singlePane) singlePane.classList.add('show', 'active');
+  if (multiTab) multiTab.classList.remove('active');
+  if (multiPane) multiPane.classList.remove('show', 'active');
+
+  const playerForm = document.getElementById('playerForm');
+  if (playerForm) playerForm.classList.remove('d-none');
+
   clearMultiLineText();
   resetStarRating();
   
   playerModalInstance.show();
 }
 
-function openEditPlayerModal(playerId, name, ratingId, gender) {
+function openEditPlayerModal(playerId) {
+  const player = allPlayers.find(p => p.playerid === playerId);
+  if (!player) return;
+
   const tabsContainer = document.getElementById('playerEntryTabsContainer');
   if (tabsContainer) tabsContainer.style.display = 'none';
 
   document.getElementById('playerModalTitle').innerHTML = `<i class="bi bi-pencil-square text-primary me-2"></i>Edit Player`;
-  document.getElementById('modalPlayerId').value = playerId;
-  document.getElementById('modalPlayerName').value = name;
-  document.getElementById('modalPlayerGender').value = gender;
+  document.getElementById('modalPlayerId').value = player.playerid;
+  document.getElementById('modalPlayerName').value = player.name || '';
+  document.getElementById('modalPlayerGender').value = player.gender || '';
 
   const singlePane = document.getElementById('single-modal-pane');
   const multiPane = document.getElementById('multi-modal-pane');
@@ -200,8 +210,11 @@ function openEditPlayerModal(playerId, name, ratingId, gender) {
     multiPane.classList.remove('show', 'active');
   }
 
-  if (ratingId !== '') {
-    setStarRating(parseInt(ratingId, 10));
+  const playerForm = document.getElementById('playerForm');
+  if (playerForm) playerForm.classList.remove('d-none');
+
+  if (player.ratingid) {
+    setStarRating(parseInt(player.ratingid, 10));
   } else {
     resetStarRating();
   }
@@ -361,9 +374,12 @@ async function savePlayerRecord() {
 }
 
 // Delete Handlers
-function openDeletePlayerModal(playerId, name) {
-  document.getElementById('deletePlayerId').value = playerId;
-  document.getElementById('deletePlayerName').textContent = name;
+function openDeletePlayerModal(playerId) {
+  const player = allPlayers.find(p => p.playerid === playerId);
+  if (!player) return;
+
+  document.getElementById('deletePlayerId').value = player.playerid;
+  document.getElementById('deletePlayerName').textContent = player.name;
   deleteModalInstance.show();
 }
 
@@ -384,7 +400,10 @@ async function executeDeletePlayer() {
 }
 
 // View History Handlers with Tabs & Match Participants Detail
-async function openHistoryModal(playerId, playerName) {
+async function openHistoryModal(playerId) {
+  const playerRecord = allPlayers.find(p => p.playerid === playerId);
+  const playerName = playerRecord ? playerRecord.name : 'Unknown Player';
+
   document.getElementById('historyPlayerName').textContent = playerName;
   
   const currentMatchContainer = document.getElementById('currentMatchContainer');
@@ -394,20 +413,31 @@ async function openHistoryModal(playerId, playerName) {
   // Hide the match detail tab initially when opening fresh
   if (matchDetailTabItem) matchDetailTabItem.style.display = 'none';
 
-  currentMatchContainer.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading current match...</div>`;
-  historicalMatchesContainer.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading historical matches...</div>`;
-  
-  // Default to opening the first tab (Current Match)
-  const currentMatchTab = document.getElementById('current-match-tab');
-  if (currentMatchTab) {
-    new bootstrap.Tab(currentMatchTab).show();
+  if (currentMatchContainer) {
+    currentMatchContainer.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading current match...</div>`;
   }
+  if (historicalMatchesContainer) {
+    historicalMatchesContainer.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading historical matches...</div>`;
+  }
+  
+  // Reset tabs to default first tab (Current Match)
+  const currentMatchTab = document.getElementById('current-match-tab');
+  const currentMatchPane = document.getElementById('current-match-pane');
+  const historicalMatchesTab = document.getElementById('historical-matches-tab');
+  const historicalMatchesPane = document.getElementById('historical-matches-pane');
+  const matchDetailTab = document.getElementById('match-detail-tab');
+  const matchDetailPane = document.getElementById('match-detail-pane');
+
+  if (currentMatchTab) currentMatchTab.classList.add('active');
+  if (currentMatchPane) currentMatchPane.classList.add('show', 'active');
+  if (historicalMatchesTab) historicalMatchesTab.classList.remove('active');
+  if (historicalMatchesPane) historicalMatchesPane.classList.remove('show', 'active');
+  if (matchDetailTab) matchDetailTab.classList.remove('active');
+  if (matchDetailPane) matchDetailPane.classList.remove('show', 'active');
 
   historyModalInstance.show();
 
   try {
-    const playerRecord = allPlayers.find(p => p.playerid === playerId);
-    
     // 1. Load Current Match
     if (playerRecord && playerRecord.currentgameid) {
       const { data: gameData, error: gameError } = await db.from('game').select('*').eq('gameid', playerRecord.currentgameid).single();
@@ -472,13 +502,11 @@ async function openHistoryModal(playerId, playerName) {
         const gameId = item.game && item.game.gameid ? item.game.gameid : item.gameid;
         const gameName = item.game && item.game.gamename ? item.game.gamename : 'Game #' + gameId;
         const dateTime = item.game && item.game.startdatetime ? new Date(item.game.startdatetime).toLocaleString() : '--';
-        
-        const escapedGameName = escapeHtml(gameName).replace(/'/g, "\\'");
 
         historyHtml += `
           <tr>
             <td class="ps-3 fw-medium">
-              <a href="#" class="text-primary text-decoration-none fw-semibold" onclick="openMatchParticipants(${gameId}, '${escapedGameName}'); return false;">
+              <a href="#" class="text-primary text-decoration-none fw-semibold" onclick="openMatchParticipants(${gameId}, '${escapeHtml(gameName).replace(/'/g, "\\&#39;")}'); return false;">
                 <i class="bi bi-link-45deg me-1"></i>${escapeHtml(gameName)}
               </a>
             </td>
@@ -498,8 +526,8 @@ async function openHistoryModal(playerId, playerName) {
 
   } catch (err) {
     console.error("Error loading history:", err);
-    currentMatchContainer.innerHTML = `<div class="text-danger small text-center py-3">Failed to load current match details.</div>`;
-    historicalMatchesContainer.innerHTML = `<div class="text-danger small text-center py-3">Failed to load historical matches.</div>`;
+    if (currentMatchContainer) currentMatchContainer.innerHTML = `<div class="text-danger small text-center py-3">Failed to load current match details.</div>`;
+    if (historicalMatchesContainer) historicalMatchesContainer.innerHTML = `<div class="text-danger small text-center py-3">Failed to load historical matches.</div>`;
   }
 }
 
@@ -508,19 +536,28 @@ async function openMatchParticipants(gameId, gameName) {
   const container = document.getElementById('matchParticipantsContainer');
   const tabItem = document.getElementById('matchDetailTabItem');
   const tabTitle = document.getElementById('matchDetailTabTitle');
-  const matchTabBtn = document.getElementById('match-detail-tab');
 
   tabTitle.textContent = gameName;
   if (tabItem) tabItem.style.display = 'block';
   
   container.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading participants for ${escapeHtml(gameName)}...</div>`;
 
-  if (matchTabBtn) {
-    new bootstrap.Tab(matchTabBtn).show();
-  }
+  // Explicitly activate match detail tab and pane
+  const matchDetailTab = document.getElementById('match-detail-tab');
+  const matchDetailPane = document.getElementById('match-detail-pane');
+  const currentMatchTab = document.getElementById('current-match-tab');
+  const currentMatchPane = document.getElementById('current-match-pane');
+  const historicalMatchesTab = document.getElementById('historical-matches-tab');
+  const historicalMatchesPane = document.getElementById('historical-matches-pane');
+
+  if (currentMatchTab) currentMatchTab.classList.remove('active');
+  if (currentMatchPane) currentMatchPane.classList.remove('show', 'active');
+  if (historicalMatchesTab) historicalMatchesTab.classList.remove('active');
+  if (historicalMatchesPane) historicalMatchesPane.classList.remove('show', 'active');
+  if (matchDetailTab) matchDetailTab.classList.add('active');
+  if (matchDetailPane) matchDetailPane.classList.add('show', 'active');
 
   try {
-    // Fetch all queue/match records associated with this specific gameid
     const { data: participants, error } = await db
       .from('queue')
       .select('*, players(playerid, name, ratingid, gender)')
@@ -594,9 +631,14 @@ async function openMatchParticipants(gameId, gameName) {
 // Back button handler to return to historical matches list tab
 function backToHistoricalMatches() {
   const historicalTab = document.getElementById('historical-matches-tab');
-  if (historicalTab) {
-    new bootstrap.Tab(historicalTab).show();
-  }
+  const historicalPane = document.getElementById('historical-matches-pane');
+  const matchDetailTab = document.getElementById('match-detail-tab');
+  const matchDetailPane = document.getElementById('match-detail-pane');
+
+  if (matchDetailTab) matchDetailTab.classList.remove('active');
+  if (matchDetailPane) matchDetailPane.classList.remove('show', 'active');
+  if (historicalTab) historicalTab.classList.add('active');
+  if (historicalPane) historicalPane.classList.add('show', 'active');
 }
 
 // Utility

@@ -1,13 +1,18 @@
 // Queue Page State
 let allPlayers = [];
 let activeSessionId = null;
-let playerModalInstance = null;
+let activeSessionData = null;
+let editPlayerModalInstance = null;
+let clearRosterModalInstance = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   // Initialize layout.js header & footer with page title
-  initPageLayout("Queue & Courts");
+  initPageLayout("Queue & Matchmaking");
 
-  playerModalInstance = new bootstrap.Modal(document.getElementById('playerModal'));
+  editPlayerModalInstance = new bootstrap.Modal(document.getElementById('editPlayerModal'));
+  clearRosterModalInstance = new bootstrap.Modal(document.getElementById('clearRosterModal'));
+
+  setupSearchAutocompleteListener();
 
   await checkDbConnection();
   await fetchActiveSession();
@@ -17,25 +22,36 @@ document.addEventListener("DOMContentLoaded", async () => {
 // Fetch active session
 async function fetchActiveSession() {
   try {
-    const { data, error } = await db
-      .from('game')
-      .select('gameid, gamename')
-      .is('enddatetime', null)
-      .order('startdatetime', { ascending: false })
-      .limit(1);
+    const urlParams = new URLSearchParams(window.location.search);
+    const gameIdParam = urlParams.get('gameid');
+
+    let query = db.from('game').select('*').is('enddatetime', null);
+
+    if (gameIdParam) {
+      query = query.eq('gameid', gameIdParam);
+    } else {
+      query = query.order('startdatetime', { ascending: false }).limit(1);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
     if (data && data.length > 0) {
-      activeSessionId = data[0].gameid;
-      const titleEl = document.getElementById('gameSessionTitle');
-      if (titleEl) titleEl.textContent = data[0].gamename || "Open Play";
+      activeSessionData = data[0];
+      activeSessionId = activeSessionData.gameid;
+      const titleEl = document.getElementById('sessionTitleDisplay');
+      if (titleEl) titleEl.textContent = activeSessionData.gamename || "Active Matchmaking Session";
+    } else {
+      const titleEl = document.getElementById('sessionTitleDisplay');
+      if (titleEl) titleEl.textContent = "No Active Session Found";
     }
   } catch (err) {
     console.error("Error fetching active session:", err);
+    showToast("Error fetching active session", "danger");
   }
 }
 
-// Load all players and determine status (Checked Out vs Waiting / Active)
+// Load all players and session roster
 async function loadQueueData() {
   try {
     const { data, error } = await db
@@ -49,78 +65,217 @@ async function loadQueueData() {
     renderQueueUI();
   } catch (err) {
     console.error("Failed to load queue data:", err);
-    showToast("Error loading player status: " + err.message, "danger");
+    showToast("Error loading players: " + err.message, "danger");
   }
 }
 
-// Render UI matching reference screenshot structure
+// Render Session Players Pool matching UI
 function renderQueueUI() {
-  const playersCountBadge = document.getElementById('playersCountBadge');
-  const queueCountBadge = document.getElementById('queueCountBadge');
-  const queueHeaderCount = document.getElementById('queueHeaderCount');
-  const queueContainerBody = document.getElementById('queueContainerBody');
-  const checkedOutContainer = document.getElementById('checkedOutPlayersContainer');
-  const leftSectionHeader = document.getElementById('leftSectionHeader');
+  const container = document.getElementById('rosterContainer');
+  const badge = document.getElementById('queuePlayerCountBadge');
+  const clearBtn = document.getElementById('clearRosterBtn');
 
-  if (playersCountBadge) playersCountBadge.textContent = allPlayers.length;
+  if (!container) return;
 
-  // Filter players: Checked out means currentgameid is null (or not assigned to active session)
-  const checkedOutPlayers = allPlayers.filter(p => p.currentgameid === null || p.currentgameid === undefined);
-  const waitingPlayers = allPlayers.filter(p => p.currentgameid !== null && p.currentgameid !== undefined);
-
-  if (queueCountBadge) queueCountBadge.textContent = waitingPlayers.length;
-  if (queueHeaderCount) queueHeaderCount.textContent = waitingPlayers.length;
-
-  // 1. Render Queue / Waiting Section
-  if (waitingPlayers.length === 0) {
-    queueContainerBody.innerHTML = `<p class="text-muted mb-0 py-2">No players in queue</p>`;
-  } else {
-    let queueHtml = `<div class="list-group list-group-flush bg-transparent">`;
-    waitingPlayers.forEach((p, idx) => {
-      queueHtml += `
-        <div class="list-group-item bg-transparent text-light border-secondary d-flex justify-content-between align-items-center py-2">
-          <div>
-            <span class="text-muted me-2">${idx + 1}</span>
-            <span class="fw-semibold">${escapeHtml(p.name)}</span>
-          </div>
-          <button class="btn btn-sm btn-outline-warning py-0 px-2" onclick="checkoutPlayer(${p.playerid})">Check Out</button>
-        </div>
-      `;
-    });
-    queueHtml += `</div>`;
-    queueContainerBody.innerHTML = queueHtml;
+  if (!activeSessionId) {
+    container.innerHTML = `<span class="text-muted small italic w-100 text-center">No active session found.</span>`;
+    if (badge) badge.textContent = "0 Players";
+    return;
   }
 
-  // 2. Render Left (Checked Out) Section matching the screenshot list style
-  if (leftSectionHeader) leftSectionHeader.textContent = `Left (${checkedOutPlayers.length})`;
+  // Filter players assigned to this active session
+  const sessionPlayers = allPlayers.filter(p => p.currentgameid === activeSessionId);
 
-  if (checkedOutPlayers.length === 0) {
-    checkedOutContainer.innerHTML = `<div class="text-center text-muted py-3">No checked-out players</div>`;
-  } else {
-    let leftHtml = `<div class="d-flex flex-column gap-2">`;
-    checkedOutPlayers.forEach((p, idx) => {
-      leftHtml += `
-        <div class="card bg-dark border border-secondary border-opacity-25 rounded-3 p-3 d-flex flex-row justify-content-between align-items-center">
-          <div class="d-flex align-items-center gap-3">
-            <span class="text-muted fw-medium">${idx + 1}</span>
-            <div>
-              <h6 class="mb-0 text-white fw-semibold">${escapeHtml(p.name)}</h6>
-              <small class="text-muted" style="font-size: 0.75rem;">0-0 (0 games)</small>
+  if (badge) badge.textContent = `${sessionPlayers.length} Player${sessionPlayers.length === 1 ? '' : 's'}`;
+
+  if (sessionPlayers.length === 0) {
+    container.innerHTML = `<span class="text-muted small italic w-100 text-center">No players added to this session yet. Use the search above to add players.</span>`;
+    if (clearBtn) clearBtn.classList.add('d-none');
+    return;
+  }
+
+  if (clearBtn) clearBtn.classList.remove('d-none');
+  container.innerHTML = '';
+
+  sessionPlayers.forEach((player) => {
+    const tag = document.createElement('div');
+    tag.className = 'badge bg-white text-dark border shadow-sm player-tag d-flex align-items-center gap-2 p-2';
+    
+    const idBadge = player.playerid 
+      ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1" style="font-size:0.65rem;">ID: ${player.playerid}</span>` 
+      : '';
+
+    let ratingBadge = '';
+    if (player.ratingid && typeof RATING_MAP !== 'undefined' && RATING_MAP[player.ratingid]) {
+      const r = RATING_MAP[player.ratingid];
+      const displayVal = r.value || r.label || player.ratingid;
+      ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning" style="font-size:0.65rem;"><i class="bi bi-star-fill text-warning me-1"></i>${escapeHtml(displayVal)}</span>`;
+    }
+
+    let genderBadge = '';
+    if (player.gender) {
+      const genderText = player.gender === 'F' ? 'Female (F)' : 'Male (M)';
+      genderBadge = `<span class="badge bg-info bg-opacity-10 text-info border border-info" style="font-size:0.65rem;">${genderText}</span>`;
+    }
+
+    // Pass ONLY player.playerid to avoid quote-escaping or identifier errors
+    tag.innerHTML = `
+      <i class="bi bi-person-fill text-primary"></i>
+      <span class="fw-semibold text-dark">${escapeHtml(player.name)}</span>
+      ${ratingBadge}
+      ${genderBadge}
+      ${idBadge}
+      <i class="bi bi-pencil-fill text-muted text-hover-primary ms-1" style="cursor:pointer;" onclick="openEditPlayerModal(${player.playerid})" title="Edit Player"></i>
+      <i class="bi bi-x-circle-fill text-muted text-hover-danger" style="cursor:pointer;" onclick="removePlayerFromSession(${player.playerid})" title="Remove from session"></i>
+    `;
+    container.appendChild(tag);
+  });
+}
+
+// Live Search & Autocomplete Listener
+function setupSearchAutocompleteListener() {
+  const input = document.getElementById('singlePlayerInput');
+  const dropdown = document.getElementById('autocompleteDropdown');
+  let debounceTimer = null;
+
+  if (!input) return;
+
+  input.addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+
+    clearTimeout(debounceTimer);
+    if (query.length < 1) {
+      dropdown.classList.add('d-none');
+      return;
+    }
+
+    debounceTimer = setTimeout(() => searchPlayersInDb(query), 250);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+      dropdown.classList.add('d-none');
+    }
+  });
+}
+
+function searchPlayersInDb(query) {
+  const dropdown = document.getElementById('autocompleteDropdown');
+  
+  db.from('players')
+    .select('playerid, name, gender, ratingid, currentgameid')
+    .ilike('name', `%${query}%`)
+    .limit(5)
+    .then(({ data, error }) => {
+      if (error) throw error;
+
+      dropdown.innerHTML = '';
+
+      if (data && data.length > 0) {
+        data.forEach(player => {
+          if (player.currentgameid === activeSessionId) return;
+
+          const item = document.createElement('div');
+          item.className = 'autocomplete-item border-bottom d-flex justify-content-between align-items-center p-2 bg-white';
+          item.style.cursor = 'pointer';
+
+          const idBadge = `<span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1" style="font-size:0.65rem;">ID: ${player.playerid}</span>`;
+          
+          let ratingBadge = '';
+          if (player.ratingid && typeof RATING_MAP !== 'undefined' && RATING_MAP[player.ratingid]) {
+            const r = RATING_MAP[player.ratingid];
+            const displayVal = r.value || r.label || player.ratingid;
+            ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning" style="font-size:0.65rem;"><i class="bi bi-star-fill text-warning me-1"></i>${escapeHtml(displayVal)}</span>`;
+          }
+
+          let genderBadge = '';
+          if (player.gender) {
+            const genderText = player.gender === 'F' ? 'Female (F)' : 'Male (M)';
+            genderBadge = `<span class="badge bg-info bg-opacity-10 text-info border border-info" style="font-size:0.65rem;">${genderText}</span>`;
+          }
+
+          item.innerHTML = `
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <i class="bi bi-person-fill text-primary"></i>
+              <span class="fw-semibold text-dark">${escapeHtml(player.name)}</span>
+              ${ratingBadge}
+              ${genderBadge}
+              ${idBadge}
             </div>
-          </div>
-          <button type="button" class="btn btn-sm btn-success fw-medium px-3" onclick="checkInPlayer(${p.playerid})">
-            Check In
-          </button>
-        </div>
-      `;
+          `;
+          
+          item.onclick = () => addPlayerToSession(player.playerid);
+          dropdown.appendChild(item);
+        });
+      } else {
+        const item = document.createElement('div');
+        item.className = 'autocomplete-item text-muted small p-2 bg-white';
+        item.innerHTML = `<i class="bi bi-info-circle me-1"></i>No existing player found. Click "Add New Player" to create.`;
+        dropdown.appendChild(item);
+      }
+
+      dropdown.classList.remove('d-none');
+    })
+    .catch(err => {
+      console.error("Autocomplete search error:", err);
     });
-    leftHtml += `</div>`;
-    checkedOutContainer.innerHTML = leftHtml;
+}
+
+async function addSinglePlayerFromInput() {
+  const input = document.getElementById('singlePlayerInput');
+  const btn = document.getElementById('addSinglePlayerBtn');
+  const name = input.value.trim();
+  
+  if (!name) {
+    showToast("Please enter a player name.", "warning");
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Processing...`;
+
+  try {
+    const { data: existingDbPlayers, error: searchErr } = await db
+      .from('players')
+      .select('playerid, name, currentgameid')
+      .ilike('name', name);
+
+    if (searchErr) throw searchErr;
+
+    const exactMatch = existingDbPlayers ? existingDbPlayers.find(p => p.name.trim().toLowerCase() === name.toLowerCase()) : null;
+
+    if (exactMatch) {
+      await addPlayerToSession(exactMatch.playerid);
+      input.value = '';
+    } else {
+      const { data: newData, error: insertErr } = await db
+        .from('players')
+        .insert([{ name: name, ratingid: null, gender: null, currentgameid: activeSessionId }])
+        .select();
+
+      if (insertErr) throw insertErr;
+
+      showToast(`Created new player "${name}" and added to session!`, "success");
+      input.value = '';
+      await loadQueueData();
+    }
+  } catch (err) {
+    console.error("Error adding player:", err);
+    showToast("Error adding player: " + err.message, "danger");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<i class="bi bi-plus-lg me-1"></i> Add New Player`;
+    document.getElementById('autocompleteDropdown').classList.add('d-none');
   }
 }
 
-// Check In Action (Moves player into active queue state)
-async function checkInPlayer(playerId) {
+// Add player to active session
+async function addPlayerToSession(playerId) {
+  if (!activeSessionId) {
+    showToast("No active session found.", "warning");
+    return;
+  }
+
   try {
     const { error } = await db
       .from('players')
@@ -128,16 +283,19 @@ async function checkInPlayer(playerId) {
       .eq('playerid', playerId);
 
     if (error) throw error;
-    showToast("Player checked in successfully!", "success");
+
+    document.getElementById("singlePlayerInput").value = '';
+    document.getElementById("autocompleteDropdown").classList.add("d-none");
+    showToast("Player added to session successfully!", "success");
     await loadQueueData();
   } catch (err) {
-    console.error("Check-in error:", err);
-    showToast("Failed to check in player: " + err.message, "danger");
+    console.error("Error adding player to session:", err);
+    showToast("Failed to add player: " + err.message, "danger");
   }
 }
 
-// Check Out Action (Moves player back to Left list)
-async function checkoutPlayer(playerId) {
+// Remove player from session (sets currentgameid to null)
+async function removePlayerFromSession(playerId) {
   try {
     const { error } = await db
       .from('players')
@@ -145,34 +303,16 @@ async function checkoutPlayer(playerId) {
       .eq('playerid', playerId);
 
     if (error) throw error;
-    showToast("Player checked out.", "info");
+
+    showToast("Player removed from session.", "info");
     await loadQueueData();
   } catch (err) {
-    console.error("Check-out error:", err);
-    showToast("Failed to check out player: " + err.message, "danger");
+    console.error("Error removing player from session:", err);
+    showToast("Failed to remove player: " + err.message, "danger");
   }
 }
 
-// Add Player Modal triggers (reuses exact logic from players.js)
-function openAddPlayerModal() {
-  const tabsContainer = document.getElementById('playerEntryTabsContainer');
-  if (tabsContainer) tabsContainer.style.display = 'block';
-
-  document.getElementById('playerModalTitle').innerHTML = `<i class="bi bi-person-plus text-primary me-2"></i>Add New Player`;
-  document.getElementById('modalPlayerId').value = '';
-  document.getElementById('modalPlayerName').value = '';
-  document.getElementById('modalPlayerGender').value = '';
-  
-  const singleTab = document.getElementById('single-modal-tab');
-  if (singleTab) {
-    new bootstrap.Tab(singleTab).show();
-  }
-  clearMultiLineText();
-  resetStarRating();
-  
-  playerModalInstance.show();
-}
-
+// Bulk Multi-Line Entry Support
 function updateMultiLineCounter() {
   const rawText = document.getElementById('multiPlayerInput').value;
   const names = parseLinesToNames(rawText);
@@ -188,8 +328,7 @@ function parseLinesToNames(text) {
 }
 
 function clearMultiLineText() {
-  const inputEl = document.getElementById('multiPlayerInput');
-  if (inputEl) inputEl.value = '';
+  document.getElementById('multiPlayerInput').value = '';
   updateMultiLineCounter();
 }
 
@@ -208,34 +347,73 @@ async function addMultiLinePlayers() {
 
   try {
     let addedCount = 0;
-    for (let name of names) {
-      const { error } = await db
-        .from('players')
-        .insert([{ name: name, ratingid: null, gender: null, currentgameid: null }]);
 
-      if (!error) addedCount++;
+    for (let name of names) {
+      const { data: existingDbPlayers } = await db.from('players').select('playerid, name').ilike('name', name);
+      const exactMatch = existingDbPlayers ? existingDbPlayers.find(p => p.name.trim().toLowerCase() === name.toLowerCase()) : null;
+
+      if (exactMatch) {
+        await db.from('players').update({ currentgameid: activeSessionId }).eq('playerid', exactMatch.playerid);
+        addedCount++;
+      } else {
+        const { data: newData } = await db.from('players').insert([{ name: name, ratingid: null, gender: null, currentgameid: activeSessionId }]).select();
+        if (newData && newData.length > 0) {
+          addedCount++;
+        }
+      }
     }
 
-    showToast(`Successfully added ${addedCount} player(s)!`, "success");
+    showToast(`Successfully added ${addedCount} player(s) to session!`, "success");
     clearMultiLineText();
-    playerModalInstance.hide();
     await loadQueueData();
+
+    const singleTab = new bootstrap.Tab(document.getElementById('single-tab'));
+    singleTab.show();
   } catch (err) {
-    console.error("Bulk insert error:", err);
-    showToast("Error saving players: " + err.message, "danger");
+    console.error("Failed bulk player insert:", err);
+    showToast("Error saving bulk players: " + err.message, "danger");
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Add All To Directory';
+    btn.textContent = 'Add All To Session';
   }
 }
 
+// Clear Session Roster Modal Handlers
+function confirmClearRoster() {
+  const sessionPlayers = allPlayers.filter(p => p.currentgameid === activeSessionId);
+  if (sessionPlayers.length > 0) {
+    clearRosterModalInstance.show();
+  }
+}
+
+async function executeClearRoster() {
+  if (!activeSessionId) return;
+
+  try {
+    const { error } = await db
+      .from('players')
+      .update({ currentgameid: null })
+      .eq('currentgameid', activeSessionId);
+
+    if (error) throw error;
+
+    clearRosterModalInstance.hide();
+    showToast("All players removed from session.", "info");
+    await loadQueueData();
+  } catch (err) {
+    console.error("Error clearing session roster:", err);
+    showToast("Failed to clear roster: " + err.message, "danger");
+  }
+}
+
+// Edit Player Modal Handlers
 function resetStarRating() {
   const stars = document.querySelectorAll('#starRatingContainer .style-star');
   stars.forEach(s => {
     s.classList.remove('bi-star-fill');
     s.classList.add('bi-star');
   });
-  document.getElementById('modalRatingId').value = '';
+  document.getElementById('editPlayerRatingId').value = '';
   document.getElementById('ratingValueBadge').textContent = 'Unassigned';
 }
 
@@ -251,22 +429,47 @@ function setStarRating(starCount) {
     }
   });
 
-  const ratingInfo = RATING_MAP[starCount] || { ratingid: null, label: "Unassigned" };
-  document.getElementById('modalRatingId').value = ratingInfo.ratingid || '';
-  document.getElementById('ratingValueBadge').textContent = ratingInfo.label;
+  const ratingInfo = (typeof RATING_MAP !== 'undefined' && RATING_MAP[starCount]) 
+    ? RATING_MAP[starCount] 
+    : { ratingid: starCount, label: "Unassigned" };
+  
+  document.getElementById('editPlayerRatingId').value = ratingInfo.ratingid !== undefined ? ratingInfo.ratingid : starCount;
+  document.getElementById('ratingValueBadge').textContent = ratingInfo.label || ratingInfo.value || 'Unassigned';
 }
 
-async function savePlayerRecord() {
-  const name = document.getElementById('modalPlayerName').value.trim();
-  const rawRating = document.getElementById('modalRatingId').value;
-  const gender = document.getElementById('modalPlayerGender').value || null;
-  const ratingId = rawRating ? parseInt(rawRating, 10) : null;
-  const saveBtn = document.getElementById('savePlayerBtn');
+// Open Edit Modal using player ID lookup to avoid variable passing syntax errors
+function openEditPlayerModal(playerId) {
+  const player = allPlayers.find(p => p.playerid === playerId);
+  if (!player) return;
 
-  if (!name) {
-    showToast("Please enter a player name.", "warning");
+  document.getElementById('editPlayerIndex').value = player.playerid;
+  document.getElementById('editPlayerName').value = player.name || '';
+  document.getElementById('editPlayerGender').value = player.gender || '';
+
+  if (player.ratingid && typeof RATING_MAP !== 'undefined') {
+    const ratingKey = parseInt(player.ratingid, 10);
+    setStarRating(ratingKey);
+  } else {
+    resetStarRating();
+  }
+
+  editPlayerModalInstance.show();
+}
+
+async function savePlayerEdit() {
+  const playerId = document.getElementById('editPlayerIndex').value;
+  const newName = document.getElementById('editPlayerName').value.trim();
+  const rawRatingId = document.getElementById('editPlayerRatingId').value;
+  const rawGender = document.getElementById('editPlayerGender').value;
+  const saveBtn = document.getElementById('saveEditBtn');
+
+  if (!newName) {
+    showToast("Player name cannot be empty.", "warning");
     return;
   }
+
+  const newRatingId = rawRatingId ? parseInt(rawRatingId, 10) : null;
+  const newGender = rawGender ? rawGender : null;
 
   saveBtn.disabled = true;
   saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
@@ -274,19 +477,52 @@ async function savePlayerRecord() {
   try {
     const { error } = await db
       .from('players')
-      .insert([{ name, ratingid: ratingId, gender, currentgameid: null }]);
+      .update({
+        name: newName,
+        ratingid: newRatingId,
+        gender: newGender
+      })
+      .eq('playerid', playerId);
 
     if (error) throw error;
-    showToast(`Successfully created "${name}"!`, "success");
 
-    playerModalInstance.hide();
+    editPlayerModalInstance.hide();
+    showToast(`Updated player "${newName}" successfully!`, "success");
     await loadQueueData();
   } catch (err) {
-    console.error("Save error:", err);
-    showToast("Failed to save player: " + err.message, "danger");
+    console.error("Error updating player in database:", err);
+    showToast("Database update failed: " + err.message, "danger");
   } finally {
     saveBtn.disabled = false;
-    saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Player`;
+    saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Changes`;
+  }
+}
+
+// End current session action
+async function endCurrentSession() {
+  if (!activeSessionId) return;
+  if (!confirm("Are you sure you want to end the current session? All players will be unassigned from this session.")) return;
+
+  try {
+    await db
+      .from('players')
+      .update({ currentgameid: null })
+      .eq('currentgameid', activeSessionId);
+
+    const { error } = await db
+      .from('game')
+      .update({ enddatetime: new Date().toISOString() })
+      .eq('gameid', activeSessionId);
+
+    if (error) throw error;
+
+    showToast("Session ended successfully.", "success");
+    setTimeout(() => {
+      window.location.href = 'index.html';
+    }, 1000);
+  } catch (err) {
+    console.error("Error ending session:", err);
+    showToast("Failed to end session: " + err.message, "danger");
   }
 }
 
@@ -334,6 +570,6 @@ function escapeHtml(str) {
   });
 }
 
-function openAddCourtModal() {
-  showToast("Court management feature coming up next!", "info");
+function generateMatches() {
+  showToast("Match generation feature is ready!", "info");
 }

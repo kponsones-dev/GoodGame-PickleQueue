@@ -23,6 +23,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   await checkForActiveGameSession();
 });
 
+document.addEventListener('addBulkPlayersSubmitted', (e) => {
+  addMultiLinePlayers();
+});
+
+document.addEventListener('addSinglePlayerSubmitted', (e) => {
+  addSinglePlayerFromInput();
+});
+
 // -------------------------------------------------------------
 // TOAST NOTIFICATION PROMPT
 // -------------------------------------------------------------

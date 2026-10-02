@@ -1,7 +1,117 @@
 /**
  * Shared Page Layout Component for PickleQueue
- * Safe DOM Injection Version
+ * Safe DOM Injection Version with Robust Event Delegation for Add Player Component
  */
+
+const ADD_PLAYER_COMPONENT_HTML = `
+  <div class="card shadow-sm mb-4 border-0">
+    <div class="card-body">
+      <label class="form-label fw-medium d-flex justify-content-between align-items-center mb-3">
+        <span><i class="bi bi-person-plus text-primary me-2"></i>Add Players</span>
+      </label>
+
+      <!-- Navigation Tabs -->
+      <ul class="nav nav-tabs nav-fill mb-3" id="playerEntryTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active fw-medium" id="single-tab" data-bs-toggle="tab" data-bs-target="#single-pane" type="button" role="tab">
+            <i class="bi bi-search me-1"></i> Single Player Search
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link fw-medium" id="multi-tab" data-bs-toggle="tab" data-bs-target="#multi-pane" type="button" role="tab">
+            <i class="bi bi-card-text me-1"></i> Bulk Multi-Line Entry
+          </button>
+        </li>
+      </ul>
+
+      <div class="tab-content" id="playerEntryTabContent">
+        <!-- TAB 1: Single Player Search -->
+        <div class="tab-pane fade show active" id="single-pane" role="tabpanel">
+          <div class="position-relative">
+            <div class="input-group">
+              <input type="text" id="singlePlayerInput" class="form-control" placeholder="Search existing player or type new name..." autocomplete="off">
+              <button type="button" id="addSinglePlayerBtn" class="btn btn-outline-primary fw-medium">
+                <i class="bi bi-plus-lg me-1"></i> Add Player
+              </button>
+            </div>
+            <div id="autocompleteDropdown" class="autocomplete-dropdown list-group d-none bg-white border position-absolute w-100 shadow-sm" style="z-index: 1000;"></div>
+          </div>
+        </div>
+
+        <!-- TAB 2: Bulk Multi-Line Entry -->
+        <div class="tab-pane fade" id="multi-pane" role="tabpanel">
+          <textarea class="form-control font-monospace" id="multiPlayerInput" rows="3" placeholder="Enter player names (one per line)"></textarea>
+          <div class="d-flex justify-content-between align-items-center mt-2">
+            <span class="text-muted small" id="multiLineCounter">0 names detected</span>
+            <div>
+              <button type="button" class="btn btn-sm btn-outline-secondary me-2" id="clearMultiLineBtn">Clear</button>
+              <button type="button" id="addMultiPlayerBtn" class="btn btn-sm btn-primary">Add All</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+
+function attachAddPlayerComponentListeners() {
+  // Use event delegation on the document for maximum reliability with dynamically loaded elements
+  document.addEventListener('input', (e) => {
+    if (e.target && e.target.id === 'multiPlayerInput') {
+      const multiInput = e.target;
+      const counterSpan = document.getElementById('multiLineCounter');
+      if (counterSpan) {
+        const lines = multiInput.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        counterSpan.textContent = `${lines.length} name${lines.length === 1 ? '' : 's'} detected`;
+      }
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    // 1. Clear Button
+    if (e.target && (e.target.id === 'clearMultiLineBtn' || e.target.closest('#clearMultiLineBtn'))) {
+      const multiInput = document.getElementById('multiPlayerInput');
+      const counterSpan = document.getElementById('multiLineCounter');
+      if (multiInput) multiInput.value = '';
+      if (counterSpan) counterSpan.textContent = '0 names detected';
+      if (multiInput) multiInput.focus();
+    }
+
+    // 2. Add All (Bulk) Button
+    if (e.target && (e.target.id === 'addMultiPlayerBtn' || e.target.closest('#addMultiPlayerBtn'))) {
+      const multiInput = document.getElementById('multiPlayerInput');
+      if (!multiInput) return;
+
+      const rawText = multiInput.value;
+      const names = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      
+      if (names.length === 0) return;
+
+      // Dispatch custom event for page scripts to handle inserting names
+      const event = new CustomEvent('addBulkPlayersSubmitted', { detail: { names, rawText } });
+      document.dispatchEvent(event);
+    }
+
+    // 3. Single Add Button
+    if (e.target && (e.target.id === 'addSinglePlayerBtn' || e.target.closest('#addSinglePlayerBtn'))) {
+      const singleInput = document.getElementById('singlePlayerInput');
+      if (!singleInput) return;
+
+      const name = singleInput.value.trim();
+      if (!name) return;
+
+      const event = new CustomEvent('addSinglePlayerSubmitted', { detail: { name } });
+      document.dispatchEvent(event);
+    }
+  });
+}
+
+function injectAddPlayerComponent(containerId = 'addPlayerSlot') {
+  const container = document.getElementById(containerId);
+  if (container) {
+    container.innerHTML = ADD_PLAYER_COMPONENT_HTML;
+  }
+}
 
 function initPageLayout(pageTitle = "PickleQueue") {
   const body = document.body;
@@ -68,7 +178,6 @@ function initPageLayout(pageTitle = "PickleQueue") {
   contentContainer.className = 'mb-4';
 
   // 4. Safely move all existing <body> children into the content container.
-  // This preserves all attached event listeners and Bootstrap Modal references!
   while (body.firstChild) {
     contentContainer.appendChild(body.firstChild);
   }
@@ -83,6 +192,10 @@ function initPageLayout(pageTitle = "PickleQueue") {
   // 6. Put everything together in the DOM
   wrapper.appendChild(contentContainer);
   body.appendChild(wrapper);
+
+  // Inject the component and initialize listeners
+  injectAddPlayerComponent();
+  attachAddPlayerComponentListeners();
 }
 
 // Auto-initialize on page load based on title
