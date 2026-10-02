@@ -130,7 +130,13 @@ async function endActiveSession() {
 function resumeActiveSession() {
   if (timerInterval) clearInterval(timerInterval);
   activeSessionModalInstance.hide();
-  showToast(`Resuming session "${activeSessionData.gamename}". Redirecting...`, "info");
+  
+  if (activeSessionData && activeSessionData.gameid) {
+    showToast(`Resuming session "${activeSessionData.gamename}". Redirecting...`, "info");
+    window.location.href = `queue.html?gameid=${activeSessionData.gameid}`;
+  } else {
+    window.location.href = 'queue.html';
+  }
 }
 
 // -------------------------------------------------------------
@@ -723,8 +729,9 @@ async function startNewSession() {
     return;
   }
 
-  if (currentRoster.length === 0) {
-    showToast("Please add at least one player to the roster before starting.", "warning");
+  // Minimum 4 players check
+  if (currentRoster.length < 4) {
+    showToast(`You need at least 4 players in the roster to start a session. Currently have ${currentRoster.length}.`, "warning");
     return;
   }
 
@@ -751,19 +758,16 @@ async function startNewSession() {
       }
     }
 
-    showToast(`Session "${gameName}" started! Game ID: ${newGameId}`, "success");
+    showToast(`Session "${gameName}" started! Redirecting to queue...`, "success");
     
-    currentRoster = [];
-    renderRoster();
-    document.getElementById('sessionForm').reset();
-    
-    const descEl = document.getElementById('gameTypeDescription');
-    if (descEl) descEl.style.display = 'none';
+    // Redirect to queue.html with the new game ID after a short delay
+    setTimeout(() => {
+      window.location.href = `queue.html?gameid=${newGameId}`;
+    }, 800);
 
   } catch (err) {
     console.error("Error starting session:", err);
     showToast("Failed to start session: " + err.message, "danger");
-  } finally {
     startBtn.disabled = false;
     startBtn.innerHTML = `<i class="bi bi-play-circle-fill me-2"></i>Start Matchmaking Session`;
   }

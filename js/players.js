@@ -166,7 +166,6 @@ function filterPlayerTable() {
 
 // Add/Edit Modal Handlers
 function openAddPlayerModal() {
-  // Show tabs container for adding new players
   const tabsContainer = document.getElementById('playerEntryTabsContainer');
   if (tabsContainer) tabsContainer.style.display = 'block';
 
@@ -186,7 +185,6 @@ function openAddPlayerModal() {
 }
 
 function openEditPlayerModal(playerId, name, ratingId, gender) {
-  // Hide tabs container for editing single player records
   const tabsContainer = document.getElementById('playerEntryTabsContainer');
   if (tabsContainer) tabsContainer.style.display = 'none';
 
@@ -195,7 +193,6 @@ function openEditPlayerModal(playerId, name, ratingId, gender) {
   document.getElementById('modalPlayerName').value = name;
   document.getElementById('modalPlayerGender').value = gender;
 
-  // Ensure single player pane is active and multi pane is inactive
   const singlePane = document.getElementById('single-modal-pane');
   const multiPane = document.getElementById('multi-modal-pane');
   if (singlePane && multiPane) {
@@ -212,9 +209,7 @@ function openEditPlayerModal(playerId, name, ratingId, gender) {
   playerModalInstance.show();
 }
 
-// -------------------------------------------------------------
 // BULK MULTI-LINE PLAYER IMPORT LOGIC
-// -------------------------------------------------------------
 function updateMultiLineCounter() {
   const rawText = document.getElementById('multiPlayerInput').value;
   const names = parseLinesToNames(rawText);
@@ -388,41 +383,219 @@ async function executeDeletePlayer() {
   }
 }
 
-// View History Handlers
+// View History Handlers with Tabs & Match Participants Detail
 async function openHistoryModal(playerId, playerName) {
   document.getElementById('historyPlayerName').textContent = playerName;
-  const container = document.getElementById('historyContentContainer');
-  container.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading history...</div>`;
   
+  const currentMatchContainer = document.getElementById('currentMatchContainer');
+  const historicalMatchesContainer = document.getElementById('historicalMatchesContainer');
+  const matchDetailTabItem = document.getElementById('matchDetailTabItem');
+
+  // Hide the match detail tab initially when opening fresh
+  if (matchDetailTabItem) matchDetailTabItem.style.display = 'none';
+
+  currentMatchContainer.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading current match...</div>`;
+  historicalMatchesContainer.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading historical matches...</div>`;
+  
+  // Default to opening the first tab (Current Match)
+  const currentMatchTab = document.getElementById('current-match-tab');
+  if (currentMatchTab) {
+    new bootstrap.Tab(currentMatchTab).show();
+  }
+
   historyModalInstance.show();
 
   try {
     const playerRecord = allPlayers.find(p => p.playerid === playerId);
     
+    // 1. Load Current Match
     if (playerRecord && playerRecord.currentgameid) {
-      const { data: gameData } = await db.from('game').select('*').eq('gameid', playerRecord.currentgameid).single();
+      const { data: gameData, error: gameError } = await db.from('game').select('*').eq('gameid', playerRecord.currentgameid).single();
       
-      container.innerHTML = `
-        <div class="alert alert-info mb-3">
-          <i class="bi bi-info-circle-fill me-1"></i> Player is currently connected to an active game session.
-        </div>
+      if (gameError) throw gameError;
+
+      currentMatchContainer.innerHTML = `
         <div class="p-3 bg-light rounded border">
-          <div class="fw-bold text-primary">${escapeHtml(gameData ? gameData.gamename : 'Active Session')}</div>
-          <div class="text-muted small mt-1">Game ID: ${playerRecord.currentgameid}</div>
-          <div class="text-muted small">Started: ${gameData ? new Date(gameData.startdatetime).toLocaleString() : '--'}</div>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold text-primary"><i class="bi bi-controller me-1"></i>${escapeHtml(gameData ? gameData.gamename : 'Active Session')}</span>
+            <span class="badge bg-success bg-opacity-10 text-success border border-success">In Progress</span>
+          </div>
+          <div class="text-muted small">Game ID: ${playerRecord.currentgameid}</div>
+          <div class="text-muted small">Started: ${gameData && gameData.startdatetime ? new Date(gameData.startdatetime).toLocaleString() : '--'}</div>
         </div>
       `;
     } else {
-      container.innerHTML = `
+      currentMatchContainer.innerHTML = `
         <div class="text-center py-4 text-muted">
           <i class="bi bi-inbox fs-2 d-block mb-2"></i>
-          No active games currently recorded for this player. Match history logs will appear here.
+          Player is not currently assigned to an active match.
         </div>
       `;
     }
+
+    // 2. Load Historical Matches
+    const { data: historyData, error: historyError } = await db
+      .from('queue')
+      .select('*, game(gameid, gamename, startdatetime, enddatetime)')
+      .eq('playerid', playerId)
+      .order('queueid', { ascending: false });
+
+    if (historyError) {
+      historicalMatchesContainer.innerHTML = `
+        <div class="text-center py-4 text-muted">
+          <i class="bi bi-journal-x fs-2 d-block mb-2"></i>
+          No historical match records found.
+        </div>
+      `;
+    } else if (!historyData || historyData.length === 0) {
+      historicalMatchesContainer.innerHTML = `
+        <div class="text-center py-4 text-muted">
+          <i class="bi bi-journal-check fs-2 d-block mb-2"></i>
+          No past match records available for this player.
+        </div>
+      `;
+    } else {
+      let historyHtml = `
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light text-uppercase fs-7 text-muted">
+              <tr>
+                <th class="ps-3">Game Name</th>
+                <th>Status</th>
+                <th class="text-end pe-3">Date / Time</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      historyData.forEach(item => {
+        const gameId = item.game && item.game.gameid ? item.game.gameid : item.gameid;
+        const gameName = item.game && item.game.gamename ? item.game.gamename : 'Game #' + gameId;
+        const dateTime = item.game && item.game.startdatetime ? new Date(item.game.startdatetime).toLocaleString() : '--';
+        
+        const escapedGameName = escapeHtml(gameName).replace(/'/g, "\\'");
+
+        historyHtml += `
+          <tr>
+            <td class="ps-3 fw-medium">
+              <a href="#" class="text-primary text-decoration-none fw-semibold" onclick="openMatchParticipants(${gameId}, '${escapedGameName}'); return false;">
+                <i class="bi bi-link-45deg me-1"></i>${escapeHtml(gameName)}
+              </a>
+            </td>
+            <td><span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary">Completed / Logged</span></td>
+            <td class="text-end pe-3 text-muted small">${dateTime}</td>
+          </tr>
+        `;
+      });
+
+      historyHtml += `
+            </tbody>
+          </table>
+        </div>
+      `;
+      historicalMatchesContainer.innerHTML = historyHtml;
+    }
+
   } catch (err) {
     console.error("Error loading history:", err);
-    container.innerHTML = `<div class="text-danger small">Failed to load history details.</div>`;
+    currentMatchContainer.innerHTML = `<div class="text-danger small text-center py-3">Failed to load current match details.</div>`;
+    historicalMatchesContainer.innerHTML = `<div class="text-danger small text-center py-3">Failed to load historical matches.</div>`;
+  }
+}
+
+// Open Specific Match Participants Tab when a Historical Game is Clicked
+async function openMatchParticipants(gameId, gameName) {
+  const container = document.getElementById('matchParticipantsContainer');
+  const tabItem = document.getElementById('matchDetailTabItem');
+  const tabTitle = document.getElementById('matchDetailTabTitle');
+  const matchTabBtn = document.getElementById('match-detail-tab');
+
+  tabTitle.textContent = gameName;
+  if (tabItem) tabItem.style.display = 'block';
+  
+  container.innerHTML = `<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading participants for ${escapeHtml(gameName)}...</div>`;
+
+  if (matchTabBtn) {
+    new bootstrap.Tab(matchTabBtn).show();
+  }
+
+  try {
+    // Fetch all queue/match records associated with this specific gameid
+    const { data: participants, error } = await db
+      .from('queue')
+      .select('*, players(playerid, name, ratingid, gender)')
+      .eq('gameid', gameId);
+
+    if (error) throw error;
+
+    if (!participants || participants.length === 0) {
+      container.innerHTML = `
+        <div class="text-center py-4 text-muted">
+          <i class="bi bi-people fs-2 d-block mb-2"></i>
+          No participant history found for this game session.
+        </div>
+      `;
+      return;
+    }
+
+    let html = `
+      <div class="alert alert-light border mb-3 py-2 px-3 small text-muted">
+        Showing all players associated with <strong>${escapeHtml(gameName)}</strong> (Game ID: ${gameId})
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light text-uppercase fs-7 text-muted">
+            <tr>
+              <th class="ps-3">Player Name</th>
+              <th>Rating</th>
+              <th class="text-end pe-3">Gender</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    participants.forEach(p => {
+      const pName = p.players && p.players.name ? p.players.name : 'Unknown Player';
+      const pRatingId = p.players && p.players.ratingid ? p.players.ratingid : null;
+      const pGender = p.players && p.players.gender ? p.players.gender : '';
+
+      let ratingBadge = '<span class="text-muted small">Unassigned</span>';
+      if (pRatingId && RATING_MAP[pRatingId]) {
+        ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning">${RATING_MAP[pRatingId].value} (${RATING_MAP[pRatingId].label})</span>`;
+      }
+
+      let genderBadge = '<span class="text-muted small">--</span>';
+      if (pGender) {
+        genderBadge = pGender === 'F' ? '<span class="badge bg-info bg-opacity-10 text-info border">Female (F)</span>' : '<span class="badge bg-primary bg-opacity-10 text-primary border">Male (M)</span>';
+      }
+
+      html += `
+        <tr>
+          <td class="ps-3 fw-semibold text-dark"><i class="bi bi-person me-1 text-secondary"></i>${escapeHtml(pName)}</td>
+          <td>${ratingBadge}</td>
+          <td class="text-end pe-3">${genderBadge}</td>
+        </tr>
+      `;
+    });
+
+    html += `
+          </tbody>
+        </table>
+      </div>
+    `;
+    container.innerHTML = html;
+
+  } catch (err) {
+    console.error("Error loading match participants:", err);
+    container.innerHTML = `<div class="text-danger small text-center py-3">Failed to load game participants.</div>`;
+  }
+}
+
+// Back button handler to return to historical matches list tab
+function backToHistoricalMatches() {
+  const historicalTab = document.getElementById('historical-matches-tab');
+  if (historicalTab) {
+    new bootstrap.Tab(historicalTab).show();
   }
 }
 

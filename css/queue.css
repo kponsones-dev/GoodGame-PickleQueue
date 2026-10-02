@@ -1,0 +1,30 @@
+/* ================================================= */
+/* Queue Page Specific Styles                        */
+/* ================================================= */
+
+/* Player Pool Chips */
+.player-queue-chip {
+  transition: all 0.2s ease-in-out;
+  cursor: default;
+}
+
+.player-queue-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 .125rem .25rem rgba(0, 0, 0, .075) !important;
+}
+
+/* Match Card Containers */
+.match-card {
+  border: 1px solid rgba(0, 0, 0, .125);
+  transition: all 0.2s ease-in-out;
+}
+
+.match-card:hover {
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .05);
+}
+
+/* Custom Scrollbar for Queue Roster Box if content overflows */
+#queueRosterContainer {
+  max-height: 450px;
+  overflow-y: auto;
+}
