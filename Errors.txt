@@ -1,0 +1,14 @@
+If the court is set to inactive show Unavailable.
+
+Auto-fill must consider the other draft as well if the player is in the other draft
+the auto-fill must not put that player in it.
+
+auto-full must also consider tha active match in the court if the player is in an active
+court the auto-fill must not put the player in it.
+
+Every time a match has been completed a draft with auto-fill that doesn't have any player must
+execute the auto-fill
+
+While assigning creating draft manually must allow selecting any player because
+it could be a custom match to is planned for next match waiting for the other players
+to be completed.

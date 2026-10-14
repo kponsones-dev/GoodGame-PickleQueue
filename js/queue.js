@@ -15,6 +15,8 @@ let activeSessionData = null;
 let editPlayerModalInstance = null;
 let clearRosterModalInstance = null;
 let addCourtModalInstance = null;
+let editCourtModalInstance = null;
+let deleteCourtModalInstance = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   // Initialize layout.js header & footer
@@ -23,6 +25,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   editPlayerModalInstance = new bootstrap.Modal(document.getElementById('editPlayerModal'));
   clearRosterModalInstance = new bootstrap.Modal(document.getElementById('clearRosterModal'));
   addCourtModalInstance = new bootstrap.Modal(document.getElementById('addCourtModal'));
+  editCourtModalInstance = new bootstrap.Modal(document.getElementById('editCourtModal'));
+  deleteCourtModalInstance = new bootstrap.Modal(document.getElementById('deleteCourtModal'));
 
   setupSearchAutocompleteListener();
 
@@ -130,9 +134,12 @@ function renderCourtsUI() {
             <span class="badge ${court.isactive ? 'bg-success bg-opacity-10 text-success border-success' : 'bg-secondary bg-opacity-10 text-secondary'} border" style="font-size:0.65rem;">
               ${court.isactive ? 'Active' : 'Inactive'}
             </span>
-            <i class="bi bi-trash text-muted text-hover-danger" style="cursor:pointer;" onclick="deleteCourt(${court.courtid})" title="Delete Court"></i>
+            <div class="d-flex align-items-center gap-1">
+              <i class="bi bi-pencil-fill text-muted text-hover-primary" style="cursor:pointer;" onclick="openEditCourtModal(${court.courtid})" title="Edit Court"></i>
+              <i class="bi bi-trash text-muted text-hover-danger" style="cursor:pointer;" onclick="deleteCourt(${court.courtid})" title="Delete Court"></i>
+            </div>
           </div>
-          <i class="bi bi-bounding-box-circles fs-2 text-primary mb-1"></i>
+          <i class="bi bi-bounding-box-circles fs-2 ${court.isactive ? 'text-primary' : 'text-secondary opacity-50'} mb-1"></i>
           <h6 class="fw-bold mb-0 text-dark text-truncate w-100">${escapeHtml(court.courtname)}</h6>
         </div>
       </div>
@@ -174,8 +181,91 @@ async function handleAddCourt() {
   }
 }
 
-// Delete court
+// Open Edit Court Modal
+function openEditCourtModal(courtId) {
+  const court = sessionCourts.find(c => c.courtid === courtId);
+  if (!court) return;
+
+  document.getElementById('editCourtId').value = court.courtid;
+  document.getElementById('editCourtNameInput').value = court.courtname || '';
+  document.getElementById('editCourtIsActiveSwitch').checked = court.isactive !== false;
+
+  editCourtModalInstance.show();
+}
+
+// Save Court Edit Handler
+async function handleSaveCourtEdit() {
+  const courtId = document.getElementById('editCourtId').value;
+  const courtName = document.getElementById('editCourtNameInput').value.trim();
+  const isActive = document.getElementById('editCourtIsActiveSwitch').checked;
+  const saveBtn = document.getElementById('saveEditCourtBtn');
+
+  if (!courtName || !courtId) {
+    showToast("Please enter a valid court name.", "warning");
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
+
+  try {
+    const { error } = await db
+      .from('courts')
+      .update({
+        courtname: courtName,
+        isactive: isActive
+      })
+      .eq('courtid', courtId);
+
+    if (error) throw error;
+
+    showToast(`Updated "${courtName}" successfully!`, "success");
+    editCourtModalInstance.hide();
+    await loadCourtsData();
+  } catch (err) {
+    console.error("Failed to update court:", err);
+    showToast("Failed to update court: " + err.message, "danger");
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Changes`;
+  }
+}
+
+// Delete Court: Check foreign key links in the Match table first
 async function deleteCourt(courtId) {
+  const court = sessionCourts.find(c => c.courtid === courtId);
+  if (!court) return;
+
+  try {
+    // Check if court has any linked records in the Match table
+    const { count, error } = await db
+      .from('match')
+      .select('matchid', { count: 'exact', head: true })
+      .eq('courtid', courtId);
+
+    if (error) throw error;
+
+    // Block deletion if court is linked to existing matches
+    if (count > 0) {
+      showToast(`Cannot delete "${court.courtname}". It has ${count} match record(s) linked to it.`, "warning");
+      return;
+    }
+
+    // Show delete confirmation modal if court has no linked matches
+    document.getElementById('deleteCourtId').value = court.courtid;
+    document.getElementById('deleteCourtName').textContent = court.courtname;
+    deleteCourtModalInstance.show();
+
+  } catch (err) {
+    console.error("Error checking court match linkages:", err);
+    showToast("Failed to verify court status: " + err.message, "danger");
+  }
+}
+
+// Execute Court Deletion
+async function executeDeleteCourt() {
+  const courtId = document.getElementById('deleteCourtId').value;
+
   try {
     const { error } = await db
       .from('courts')
@@ -184,7 +274,8 @@ async function deleteCourt(courtId) {
 
     if (error) throw error;
 
-    showToast("Court deleted.", "info");
+    deleteCourtModalInstance.hide();
+    showToast("Court deleted successfully.", "info");
     await loadCourtsData();
   } catch (err) {
     console.error("Failed to delete court:", err);
