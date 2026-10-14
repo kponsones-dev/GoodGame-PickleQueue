@@ -9,14 +9,21 @@ const GAME_TYPE_MAP = {
 // Queue Page State
 let allPlayers = [];
 let sessionCourts = [];
+let activeCourtMatchesMap = {}; // { courtId: { match, team1Players, team2Players } }
 let playerStatsMap = {}; // { playerId: { matches: 0, wins: 0, losses: 0 } }
 let activeSessionId = null;
 let activeSessionData = null;
+let courtTimerInterval = null;
+
 let editPlayerModalInstance = null;
 let clearRosterModalInstance = null;
 let addCourtModalInstance = null;
 let editCourtModalInstance = null;
 let deleteCourtModalInstance = null;
+let endMatchModalInstance = null;
+
+// Temporary in-memory match pool array (Drafts before saving to Supabase)
+let inMemoryMatchPool = [];
 
 document.addEventListener("DOMContentLoaded", async () => {
   // Initialize layout.js header & footer
@@ -27,6 +34,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   addCourtModalInstance = new bootstrap.Modal(document.getElementById('addCourtModal'));
   editCourtModalInstance = new bootstrap.Modal(document.getElementById('editCourtModal'));
   deleteCourtModalInstance = new bootstrap.Modal(document.getElementById('deleteCourtModal'));
+  endMatchModalInstance = new bootstrap.Modal(document.getElementById('endMatchModal'));
 
   setupSearchAutocompleteListener();
 
@@ -34,7 +42,39 @@ document.addEventListener("DOMContentLoaded", async () => {
   await fetchActiveSession();
   await loadQueueData();
   await loadCourtsData();
+
+  // Start continuous ticker for active match court timers
+  startCourtTimers();
 });
+
+// Start active match timer updates every second
+function startCourtTimers() {
+  if (courtTimerInterval) clearInterval(courtTimerInterval);
+  courtTimerInterval = setInterval(updateCourtTimerDisplays, 1000);
+}
+
+// Update elapsed match time displays
+function updateCourtTimerDisplays() {
+  const now = new Date();
+
+  Object.keys(activeCourtMatchesMap).forEach(courtId => {
+    const matchInfo = activeCourtMatchesMap[courtId];
+    if (!matchInfo || !matchInfo.match || !matchInfo.match.startdatetime) return;
+
+    const timerEl = document.getElementById(`courtTimer_${courtId}`);
+    if (!timerEl) return;
+
+    const start = new Date(matchInfo.match.startdatetime);
+    const diffMs = Math.max(0, now - start);
+
+    const totalSeconds = Math.floor(diffMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    const formattedTime = `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+    timerEl.textContent = formattedTime;
+  });
+}
 
 // Fetch active session and matchmaking game type
 async function fetchActiveSession() {
@@ -57,11 +97,9 @@ async function fetchActiveSession() {
       activeSessionData = data[0];
       activeSessionId = activeSessionData.gameid;
 
-      // Update session title
       const titleEl = document.getElementById('sessionTitleDisplay');
       if (titleEl) titleEl.textContent = activeSessionData.gamename || "Active Matchmaking Session";
 
-      // Update matchmaking mode badge
       const badgeEl = document.getElementById('sessionTypeBadge');
       if (badgeEl) {
         let typeName = "Standard";
@@ -85,29 +123,52 @@ async function fetchActiveSession() {
   }
 }
 
-// Fetch session courts
+// Fetch session courts and their active ongoing matches
 async function loadCourtsData() {
   const container = document.getElementById('courtsContainer');
   if (!container || !activeSessionId) return;
 
   try {
-    const { data, error } = await db
+    const { data: courts, error: courtErr } = await db
       .from('courts')
       .select('*')
       .eq('gameid', activeSessionId)
       .order('courtid', { ascending: true });
 
-    if (error) throw error;
+    if (courtErr) throw courtErr;
 
-    sessionCourts = data || [];
+    sessionCourts = courts || [];
+
+    // Fetch active ongoing matches (where enddatetime IS NULL)
+    const { data: activeMatches, error: matchErr } = await db
+      .from('match')
+      .select('*, playermatch(*, players(*))')
+      .eq('gameid', activeSessionId)
+      .is('enddatetime', null);
+
+    if (matchErr) throw matchErr;
+
+    activeCourtMatchesMap = {};
+    (activeMatches || []).forEach(m => {
+      const t1 = (m.playermatch || []).filter(pm => pm.teamid === 1).map(pm => pm.players);
+      const t2 = (m.playermatch || []).filter(pm => pm.teamid === 2).map(pm => pm.players);
+      activeCourtMatchesMap[m.courtid] = {
+        match: m,
+        team1Players: t1,
+        team2Players: t2
+      };
+    });
+
     renderCourtsUI();
+    updateCourtTimerDisplays();
+    renderMatchPoolUI();
   } catch (err) {
-    console.warn("Could not load courts from DB (make sure courts table exists):", err.message);
+    console.warn("Could not load courts from DB:", err.message);
     container.innerHTML = `<div class="col-12 text-center py-2 text-muted small"><i class="bi bi-info-circle me-1"></i>No courts configured yet. Click "Add Court" to set up courts.</div>`;
   }
 }
 
-// Render courts UI
+// Render Mobile/Tablet-Optimized session courts
 function renderCourtsUI() {
   const container = document.getElementById('courtsContainer');
   if (!container) return;
@@ -115,7 +176,6 @@ function renderCourtsUI() {
   if (sessionCourts.length === 0) {
     container.innerHTML = `
       <div class="col-12 text-center py-3 text-muted small">
-        <i class="bi bi-bounding-box-circles fs-3 opacity-50 d-block mb-1"></i>
         No courts added to this session. Click <strong>"Add Court"</strong> above to create courts.
       </div>`;
     return;
@@ -125,28 +185,148 @@ function renderCourtsUI() {
 
   sessionCourts.forEach(court => {
     const col = document.createElement('div');
-    col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+    col.className = 'col-12 col-sm-6 col-md-4 col-lg-3';
+
+    const courtMatchInfo = activeCourtMatchesMap[court.courtid];
+    let matchContent = '';
+
+    if (courtMatchInfo) {
+      const t1Names = courtMatchInfo.team1Players.map(p => escapeHtml(p ? p.name : 'Unknown')).join(' & ');
+      const t2Names = courtMatchInfo.team2Players.map(p => escapeHtml(p ? p.name : 'Unknown')).join(' & ');
+
+      matchContent = `
+        <div class="mt-2 p-2 bg-primary bg-opacity-10 border border-primary border-opacity-25 rounded text-start w-100">
+          <div class="small fw-bold text-primary mb-1 d-flex align-items-center justify-content-between">
+            <span class="text-dark fw-bold" style="font-size:0.75rem;"><i class="bi bi-stopwatch text-danger me-1"></i><span id="courtTimer_${court.courtid}">0m 00s</span></span>
+          </div>
+          <div class="small text-dark fw-semibold text-truncate" title="${t1Names}">T1: ${t1Names}</div>
+          <div class="small text-muted text-center fw-bold my-1" style="font-size:0.7rem;">VS</div>
+          <div class="small text-dark fw-semibold text-truncate" title="${t2Names}">T2: ${t2Names}</div>
+          <button class="btn btn-sm btn-outline-success w-100 mt-2 fw-bold" style="font-size: 0.8rem;" onclick="openEndMatchPrompt(${courtMatchInfo.match.matchid}, ${court.courtid})">
+            <i class="bi bi-check-circle-fill me-1"></i> End Match
+          </button>
+        </div>
+      `;
+    } else {
+      matchContent = `
+        <div class="mt-2 py-2 px-2 bg-light border border-dashed rounded w-100 text-center">
+          <span class="text-success small fw-bold"><i class="bi bi-check2-circle me-1"></i>Available</span>
+        </div>
+      `;
+    }
 
     col.innerHTML = `
       <div class="card h-100 border text-center shadow-sm">
-        <div class="card-body p-3 d-flex flex-column justify-content-between align-items-center">
-          <div class="d-flex justify-content-between align-items-center w-100 mb-2">
-            <span class="badge ${court.isactive ? 'bg-success bg-opacity-10 text-success border-success' : 'bg-secondary bg-opacity-10 text-secondary'} border" style="font-size:0.65rem;">
-              ${court.isactive ? 'Active' : 'Inactive'}
-            </span>
-            <div class="d-flex align-items-center gap-1">
+        <div class="card-body p-2 px-3 d-flex flex-column justify-content-between align-items-center">
+          <div class="d-flex justify-content-between align-items-center w-100 mb-1">
+            <h6 class="fw-bold mb-0 text-dark text-truncate text-start pe-2">${escapeHtml(court.courtname)}</h6>
+            <div class="d-flex align-items-center gap-2">
               <i class="bi bi-pencil-fill text-muted text-hover-primary" style="cursor:pointer;" onclick="openEditCourtModal(${court.courtid})" title="Edit Court"></i>
               <i class="bi bi-trash text-muted text-hover-danger" style="cursor:pointer;" onclick="deleteCourt(${court.courtid})" title="Delete Court"></i>
             </div>
           </div>
-          <i class="bi bi-bounding-box-circles fs-2 ${court.isactive ? 'text-primary' : 'text-secondary opacity-50'} mb-1"></i>
-          <h6 class="fw-bold mb-0 text-dark text-truncate w-100">${escapeHtml(court.courtname)}</h6>
+          ${matchContent}
         </div>
       </div>
     `;
 
     container.appendChild(col);
   });
+}
+
+// Open custom End Match Modal with team player names
+function openEndMatchPrompt(matchId, courtId) {
+  const matchInfo = activeCourtMatchesMap[courtId];
+  if (!matchInfo) return;
+
+  const t1Names = matchInfo.team1Players.map(p => p ? p.name : 'T1').join(' & ');
+  const t2Names = matchInfo.team2Players.map(p => p ? p.name : 'T2').join(' & ');
+
+  document.getElementById('endMatchId').value = matchId;
+  document.getElementById('endMatchCourtId').value = courtId;
+  document.getElementById('team1NamesLabel').textContent = t1Names || 'Team 1';
+  document.getElementById('team2NamesLabel').textContent = t2Names || 'Team 2';
+
+  // Default values for standard pickleball game
+  document.getElementById('team1ScoreInput').value = 11;
+  document.getElementById('team2ScoreInput').value = 9;
+
+  // Reset error area & tie breaker area
+  document.getElementById('endMatchErrorAlert').classList.add('d-none');
+  document.getElementById('tieBreakerContainer').classList.add('d-none');
+
+  endMatchModalInstance.show();
+}
+
+// Handle Save End Match with official Pickleball Scoring Rules validation
+async function handleSaveEndMatch() {
+  const matchId = document.getElementById('endMatchId').value;
+  const score1Raw = document.getElementById('team1ScoreInput').value;
+  const score2Raw = document.getElementById('team2ScoreInput').value;
+  const errBox = document.getElementById('endMatchErrorAlert');
+  const errText = document.getElementById('endMatchErrorMessage');
+  const saveBtn = document.getElementById('saveEndMatchBtn');
+
+  errBox.classList.add('d-none');
+
+  const score1 = parseInt(score1Raw, 10);
+  const score2 = parseInt(score2Raw, 10);
+
+  // Validation 1: Valid numeric input
+  if (isNaN(score1) || isNaN(score2) || score1 < 0 || score2 < 0) {
+    errText.textContent = "Scores must be valid non-negative numbers.";
+    errBox.classList.remove('d-none');
+    return;
+  }
+
+  const maxScore = Math.max(score1, score2);
+  const scoreDiff = Math.abs(score1 - score2);
+
+  // Validation 2: Pickleball rules require at least 11 points to win
+  if (maxScore < 11) {
+    errText.textContent = "Pickleball rules: Winning score must be at least 11 points.";
+    errBox.classList.remove('d-none');
+    return;
+  }
+
+  // Validation 3: Must win by at least 2 points (e.g., 11-9, 12-10, 15-13)
+  if (scoreDiff < 2) {
+    errText.textContent = `Invalid score (${score1}-${score2}). A team must win by 2 or more points!`;
+    errBox.classList.remove('d-none');
+    return;
+  }
+
+  // Determine winning team
+  let winningTeam = score1 > score2 ? 1 : 2;
+
+  saveBtn.disabled = true;
+  saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
+
+  try {
+    const { error } = await db
+      .from('match')
+      .update({
+        team1_score: score1,
+        team2_score: score2,
+        winning_team: winningTeam,
+        enddatetime: new Date().toISOString()
+      })
+      .eq('matchid', matchId);
+
+    if (error) throw error;
+
+    endMatchModalInstance.hide();
+    showToast("Match completed and scores saved successfully!", "success");
+    await loadCourtsData();
+    await loadQueueData();
+  } catch (err) {
+    console.error("Error completing match:", err);
+    errText.textContent = "Failed to save match: " + err.message;
+    errBox.classList.remove('d-none');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> Save Results`;
+  }
 }
 
 // Add new court
@@ -206,7 +386,6 @@ async function handleSaveCourtEdit() {
   }
 
   saveBtn.disabled = true;
-  saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
 
   try {
     const { error } = await db
@@ -227,39 +406,17 @@ async function handleSaveCourtEdit() {
     showToast("Failed to update court: " + err.message, "danger");
   } finally {
     saveBtn.disabled = false;
-    saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Changes`;
   }
 }
 
-// Delete Court: Check foreign key links in the Match table first
+// Delete Court
 async function deleteCourt(courtId) {
   const court = sessionCourts.find(c => c.courtid === courtId);
   if (!court) return;
 
-  try {
-    // Check if court has any linked records in the Match table
-    const { count, error } = await db
-      .from('match')
-      .select('matchid', { count: 'exact', head: true })
-      .eq('courtid', courtId);
-
-    if (error) throw error;
-
-    // Block deletion if court is linked to existing matches
-    if (count > 0) {
-      showToast(`Cannot delete "${court.courtname}". It has ${count} match record(s) linked to it.`, "warning");
-      return;
-    }
-
-    // Show delete confirmation modal if court has no linked matches
-    document.getElementById('deleteCourtId').value = court.courtid;
-    document.getElementById('deleteCourtName').textContent = court.courtname;
-    deleteCourtModalInstance.show();
-
-  } catch (err) {
-    console.error("Error checking court match linkages:", err);
-    showToast("Failed to verify court status: " + err.message, "danger");
-  }
+  document.getElementById('deleteCourtId').value = court.courtid;
+  document.getElementById('deleteCourtName').textContent = court.courtname;
+  deleteCourtModalInstance.show();
 }
 
 // Execute Court Deletion
@@ -267,6 +424,13 @@ async function executeDeleteCourt() {
   const courtId = document.getElementById('deleteCourtId').value;
 
   try {
+    const courtMatchInfo = activeCourtMatchesMap[courtId];
+    if (courtMatchInfo) {
+      const matchId = courtMatchInfo.match.matchid;
+      await db.from('playermatch').delete().eq('matchid', matchId);
+      await db.from('match').delete().eq('matchid', matchId);
+    }
+
     const { error } = await db
       .from('courts')
       .delete()
@@ -275,8 +439,9 @@ async function executeDeleteCourt() {
     if (error) throw error;
 
     deleteCourtModalInstance.hide();
-    showToast("Court deleted successfully.", "info");
+    showToast("Court deleted and active players returned to queue!", "info");
     await loadCourtsData();
+    await loadQueueData();
   } catch (err) {
     console.error("Failed to delete court:", err);
     showToast("Failed to delete court: " + err.message, "danger");
@@ -291,29 +456,25 @@ async function fetchSessionPlayerStats() {
   try {
     const { data: matches, error } = await db
       .from('match')
-      .select('*')
+      .select('*, playermatch(*)')
       .eq('gameid', activeSessionId);
 
     if (error || !matches) return;
 
     matches.forEach(m => {
-      const team1 = m.team1_players || [];
-      const team2 = m.team2_players || [];
+      const playerMatches = m.playermatch || [];
       const winner = m.winning_team;
 
-      const allMatchPlayers = [...team1, ...team2];
-
-      allMatchPlayers.forEach(pId => {
+      playerMatches.forEach(pm => {
+        const pId = pm.playerid;
         if (!playerStatsMap[pId]) {
           playerStatsMap[pId] = { matches: 0, wins: 0, losses: 0 };
         }
         playerStatsMap[pId].matches += 1;
 
-        if (winner === 1 && team1.includes(pId)) {
+        if (winner && pm.teamid === winner) {
           playerStatsMap[pId].wins += 1;
-        } else if (winner === 2 && team2.includes(pId)) {
-          playerStatsMap[pId].wins += 1;
-        } else if (winner) {
+        } else if (winner && pm.teamid !== winner) {
           playerStatsMap[pId].losses += 1;
         }
       });
@@ -342,7 +503,7 @@ async function loadQueueData() {
   }
 }
 
-// Render Session Players Pool & Checked Out List matching UI
+// Render Session Players Pool & Checked Out List
 function renderQueueUI() {
   renderActiveQueuePool();
   renderCheckedOutList();
@@ -610,7 +771,6 @@ async function addSinglePlayerFromInput() {
   }
 
   btn.disabled = true;
-  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Processing...`;
 
   try {
     const { data: existingDbPlayers, error: searchErr } = await db
@@ -642,7 +802,6 @@ async function addSinglePlayerFromInput() {
     showToast("Error adding player: " + err.message, "danger");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<i class="bi bi-plus-lg me-1"></i> Add New Player`;
     document.getElementById('autocompleteDropdown').classList.add('d-none');
   }
 }
@@ -718,7 +877,6 @@ async function addMultiLinePlayers() {
   }
 
   btn.disabled = true;
-  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Processing...`;
 
   try {
     let addedCount = 0;
@@ -749,7 +907,6 @@ async function addMultiLinePlayers() {
     showToast("Error saving bulk players: " + err.message, "danger");
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Add All To Session';
   }
 }
 
@@ -844,7 +1001,6 @@ async function savePlayerEdit() {
   const newGender = rawGender ? rawGender : null;
 
   saveBtn.disabled = true;
-  saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Saving...`;
 
   try {
     const { error } = await db
@@ -866,7 +1022,6 @@ async function savePlayerEdit() {
     showToast("Database update failed: " + err.message, "danger");
   } finally {
     saveBtn.disabled = false;
-    saveBtn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Save Changes`;
   }
 }
 
@@ -894,6 +1049,361 @@ async function endCurrentSession() {
   } catch (err) {
     console.error("Error ending session:", err);
     showToast("Failed to end session: " + err.message, "danger");
+  }
+}
+
+// Click "Generate Matches" to add a new empty draft match pool slot
+function generateMatches() {
+  if (!activeSessionData) {
+    showToast("No active session found.", "warning");
+    return;
+  }
+
+  const newDraftMatch = {
+    id: Date.now(),
+    isAutoFill: false,
+    assignedCourtId: null,
+    team1: [null, null],
+    team2: [null, null]
+  };
+
+  inMemoryMatchPool.push(newDraftMatch);
+  renderMatchPoolUI();
+  showToast("Added new draft match slot to pool!", "info");
+}
+
+// Helper: Collect all player IDs currently assigned across all draft match cards in memory
+function getAllAssignedPlayerIds(excludeMatchId = null) {
+  const assigned = new Set();
+  inMemoryMatchPool.forEach(m => {
+    if (excludeMatchId && m.id === excludeMatchId) return;
+
+    [...m.team1, ...m.team2].forEach(p => {
+      if (p) {
+        const pId = typeof p === 'object' ? p.playerid : p;
+        if (pId) assigned.add(parseInt(pId, 10));
+      }
+    });
+  });
+  return assigned;
+}
+
+// Render Match Generation pool cards
+function renderMatchPoolUI() {
+  const container = document.getElementById('matchesResultContainer');
+  if (!container) return;
+
+  if (inMemoryMatchPool.length === 0) {
+    container.innerHTML = `
+      <div class="text-center py-5 text-muted">
+        <i class="bi bi-diagram-3 fs-1 text-secondary opacity-50 mb-2 d-block"></i>
+        <p class="mb-1 fw-semibold">No matches in queue pool.</p>
+        <p class="small text-muted">Click "Generate Matches" above to add draft court slots.</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="row g-3"></div>`;
+  const row = container.querySelector('.row');
+
+  // Collect busy court IDs (courts with ongoing matches)
+  const busyCourtIds = new Set(Object.keys(activeCourtMatchesMap).map(id => parseInt(id, 10)));
+
+  // Filter available courts (Active AND not currently running a match)
+  const availableCourts = sessionCourts.filter(c => c.isactive !== false && !busyCourtIds.has(c.courtid));
+
+  // Filter session active players
+  const sessionPlayers = allPlayers.filter(p => p.currentgameid === activeSessionId && p.is_checked_in !== false);
+
+  inMemoryMatchPool.forEach((match, idx) => {
+    const matchCol = document.createElement('div');
+    matchCol.className = 'col-12 col-md-6 col-lg-4';
+
+    const isAnySelected = match.assignedCourtId === "ANY" ? 'selected' : '';
+    let courtOptions = `
+      <option value="">-- Select Court --</option>
+      <option value="ANY" ${isAnySelected}>⚡ Any Available Court</option>
+    `;
+
+    availableCourts.forEach(c => {
+      const selected = match.assignedCourtId == c.courtid ? 'selected' : '';
+      courtOptions += `<option value="${c.courtid}" ${selected}>${escapeHtml(c.courtname)}</option>`;
+    });
+
+    const buildPlayerSelect = (teamKey, playerIndex) => {
+      const currentAssignedInThisCard = [];
+      [...match.team1, ...match.team2].forEach((p) => {
+        if (p) {
+          const pId = typeof p === 'object' ? p.playerid : p;
+          currentAssignedInThisCard.push(parseInt(pId, 10));
+        }
+      });
+
+      const selectedValue = match[teamKey][playerIndex] 
+        ? (typeof match[teamKey][playerIndex] === 'object' ? match[teamKey][playerIndex].playerid : match[teamKey][playerIndex])
+        : "";
+
+      let options = '<option value="">-- Select Player --</option>';
+      sessionPlayers.forEach(p => {
+        const pId = parseInt(p.playerid, 10);
+        const isSelectedInThisSlot = selectedValue == pId;
+        const isAssignedElsewhereInCard = currentAssignedInThisCard.includes(pId) && !isSelectedInThisSlot;
+
+        if (!isAssignedElsewhereInCard) {
+          options += `<option value="${p.playerid}" ${isSelectedInThisSlot ? 'selected' : ''}>${escapeHtml(p.name)}</option>`;
+        }
+      });
+
+      return `
+        <select class="form-select form-select-sm mb-1" ${match.isAutoFill ? 'disabled' : ''} onchange="handleManualPlayerSelect(${match.id}, '${teamKey}', ${playerIndex}, this)">
+          ${options}
+        </select>
+      `;
+    };
+
+    matchCol.innerHTML = `
+      <div class="card border shadow-sm h-100">
+        <div class="card-header bg-light fw-bold d-flex justify-content-between align-items-center py-2">
+          <span><i class="bi bi-diagram-3 me-1"></i> Draft Match #${idx + 1}</span>
+          <button class="btn-close text-danger" title="Remove Match Slot" onclick="removeDraftMatch(${match.id})"></button>
+        </div>
+        <div class="card-body p-3">
+          <!-- Auto-Fill Switch -->
+          <div class="form-check form-switch mb-3 bg-light p-2 rounded d-flex align-items-center justify-content-between">
+            <label class="form-check-label fw-semibold small text-dark mb-0 ms-1" for="autoFillSwitch_${match.id}">
+              <i class="bi bi-magic text-primary me-1"></i> Auto-Fill Match
+            </label>
+            <input class="form-check-input mt-0 me-1" type="checkbox" role="switch" id="autoFillSwitch_${match.id}" ${match.isAutoFill ? 'checked' : ''} onchange="toggleAutoFill(${match.id}, this.checked)">
+          </div>
+
+          <!-- Manual / Auto Teams View -->
+          <div class="mb-3 text-center">
+            <div class="p-2 bg-light rounded mb-2 text-start">
+              <small class="text-muted fw-bold d-block mb-1">TEAM 1</small>
+              ${buildPlayerSelect('team1', 0)}
+              ${buildPlayerSelect('team1', 1)}
+            </div>
+
+            <div class="fw-bold text-danger my-1 fs-6">VS</div>
+
+            <div class="p-2 bg-light rounded text-start">
+              <small class="text-muted fw-bold d-block mb-1">TEAM 2</small>
+              ${buildPlayerSelect('team2', 0)}
+              ${buildPlayerSelect('team2', 1)}
+            </div>
+          </div>
+
+          <!-- Court Selection Dropdown -->
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-muted mb-1">Assign Court</label>
+            <select class="form-select form-select-sm" onchange="handleCourtSelect(${match.id}, this.value)">
+              ${courtOptions}
+            </select>
+          </div>
+
+          <!-- Save & Send to Court Button -->
+          <button class="btn btn-sm btn-success w-100 fw-bold d-flex align-items-center justify-content-center gap-1" onclick="sendMatchToCourt(${match.id})">
+            <i class="bi bi-send-fill"></i> Save & Send to Court
+          </button>
+        </div>
+      </div>
+    `;
+
+    row.appendChild(matchCol);
+  });
+}
+
+// Remove draft match card from memory
+function removeDraftMatch(matchId) {
+  inMemoryMatchPool = inMemoryMatchPool.filter(m => m.id !== matchId);
+  renderMatchPoolUI();
+}
+
+// Toggle Auto-Fill using match type logic
+async function toggleAutoFill(matchId, isChecked) {
+  const match = inMemoryMatchPool.find(m => m.id === matchId);
+  if (!match) return;
+
+  match.isAutoFill = isChecked;
+
+  if (isChecked) {
+    const assignedPlayerIds = getAllAssignedPlayerIds(matchId);
+    const availablePlayers = allPlayers.filter(p => 
+      p.currentgameid === activeSessionId && 
+      p.is_checked_in !== false && 
+      !assignedPlayerIds.has(p.playerid)
+    );
+
+    const activeCourts = sessionCourts.filter(c => c.isactive !== false);
+
+    const { data: matchHistory } = await db.from('match').select('matchid, courtid, playermatch(playerid, teamid)').eq('gameid', activeSessionId);
+
+    const formattedHistory = (matchHistory || []).map(m => ({
+      matchid: m.matchid,
+      courtid: m.courtid,
+      team1_players: (m.playermatch || []).filter(pm => pm.teamid === 1).map(pm => pm.playerid),
+      team2_players: (m.playermatch || []).filter(pm => pm.teamid === 2).map(pm => pm.playerid)
+    }));
+
+    const gameTypeId = activeSessionData ? activeSessionData.gametypeid : 1;
+    let proposed = [];
+
+    switch (gameTypeId) {
+      case 1: proposed = generateSocialMixMatches(availablePlayers, activeCourts, formattedHistory); break;
+      case 2: proposed = generateSkillSeparatedMatches(availablePlayers, activeCourts, formattedHistory); break;
+      case 3: proposed = generateWinLoseMatches(availablePlayers, activeCourts, formattedHistory); break;
+      case 4: proposed = generateMixedGenderMatches(availablePlayers, activeCourts, formattedHistory); break;
+      default: proposed = generateSocialMixMatches(availablePlayers, activeCourts, formattedHistory); break;
+    }
+
+    if (proposed && proposed.length > 0) {
+      match.team1 = proposed[0].team1;
+      match.team2 = proposed[0].team2;
+      showToast("Auto-filled unique players using active mode algorithm!", "success");
+    } else {
+      showToast("Not enough available unique players to auto-fill.", "warning");
+      match.isAutoFill = false;
+    }
+  }
+
+  renderMatchPoolUI();
+}
+
+// Handle manual player selection
+function handleManualPlayerSelect(matchId, teamKey, playerIndex, selectElement) {
+  const selectedPlayerId = selectElement.value;
+  const match = inMemoryMatchPool.find(m => m.id === matchId);
+  if (!match) return;
+
+  if (!selectedPlayerId) {
+    match[teamKey][playerIndex] = null;
+    renderMatchPoolUI();
+    return;
+  }
+
+  const pIdNum = parseInt(selectedPlayerId, 10);
+
+  const currentCardPlayerIds = [];
+  [...match.team1, ...match.team2].forEach((p, idx) => {
+    const isCurrentSlot = (teamKey === 'team1' && idx === playerIndex) || (teamKey === 'team2' && idx === playerIndex + 2);
+    if (p && !isCurrentSlot) {
+      const pId = typeof p === 'object' ? p.playerid : p;
+      if (pId) currentCardPlayerIds.push(parseInt(pId, 10));
+    }
+  });
+
+  if (currentCardPlayerIds.includes(pIdNum)) {
+    showToast("This player is already assigned in this match!", "warning");
+    selectElement.value = "";
+    match[teamKey][playerIndex] = null;
+    return;
+  }
+
+  const assignedInOtherCards = getAllAssignedPlayerIds(matchId);
+  if (assignedInOtherCards.has(pIdNum)) {
+    showToast("This player is already assigned in another draft match card!", "warning");
+    selectElement.value = "";
+    match[teamKey][playerIndex] = null;
+    return;
+  }
+
+  const player = allPlayers.find(p => p.playerid == pIdNum);
+  match[teamKey][playerIndex] = player || pIdNum;
+
+  renderMatchPoolUI();
+}
+
+// Handle assigned court selection
+function handleCourtSelect(matchId, courtIdValue) {
+  const match = inMemoryMatchPool.find(m => m.id === matchId);
+  if (!match) return;
+
+  if (courtIdValue === "ANY") {
+    match.assignedCourtId = "ANY";
+  } else {
+    match.assignedCourtId = courtIdValue ? parseInt(courtIdValue, 10) : null;
+  }
+}
+
+// Save assigned match to database & send to court
+async function sendMatchToCourt(matchId) {
+  const match = inMemoryMatchPool.find(m => m.id === matchId);
+  if (!match) return;
+
+  const t1Valid = match.team1.filter(Boolean);
+  const t2Valid = match.team2.filter(Boolean);
+
+  if (t1Valid.length < 2 || t2Valid.length < 2) {
+    showToast("Please assign 2 players to Team 1 and 2 players to Team 2 before sending.", "warning");
+    return;
+  }
+
+  const playerIds = [...t1Valid, ...t2Valid].map(p => typeof p === 'object' ? p.playerid : p);
+  const uniquePlayerIds = new Set(playerIds);
+
+  if (uniquePlayerIds.size < 4) {
+    showToast("Duplicate players detected in this match!", "danger");
+    return;
+  }
+
+  if (!match.assignedCourtId) {
+    showToast("Please select a court option before sending.", "warning");
+    return;
+  }
+
+  let finalCourtId = match.assignedCourtId;
+
+  // Resolve "Any Available Court"
+  if (match.assignedCourtId === "ANY") {
+    const busyCourtIds = new Set(Object.keys(activeCourtMatchesMap).map(id => parseInt(id, 10)));
+    const availableCourt = sessionCourts.filter(c => c.isactive !== false && !busyCourtIds.has(c.courtid));
+
+    if (!availableCourt || availableCourt.length === 0) {
+      showToast("No active courts are currently available.", "warning");
+      return;
+    }
+
+    finalCourtId = availableCourt[0].courtid;
+  }
+
+  try {
+    // 1. Insert row into match table
+    const { data: newMatch, error: matchErr } = await db
+      .from('match')
+      .insert([{
+        gameid: activeSessionId,
+        courtid: finalCourtId,
+        team1_score: 0,
+        team2_score: 0,
+        winning_team: null,
+        startdatetime: new Date().toISOString(),
+        enddatetime: null
+      }])
+      .select()
+      .single();
+
+    if (matchErr) throw matchErr;
+
+    // 2. Insert playermatch linkages
+    const playerMatchRecords = [];
+    t1Valid.forEach(p => playerMatchRecords.push({ matchid: newMatch.matchid, playerid: p.playerid || p, teamid: 1 }));
+    t2Valid.forEach(p => playerMatchRecords.push({ matchid: newMatch.matchid, playerid: p.playerid || p, teamid: 2 }));
+
+    const { error: pmErr } = await db.from('playermatch').insert(playerMatchRecords);
+    if (pmErr) throw pmErr;
+
+    const assignedCourtObj = sessionCourts.find(c => c.courtid === finalCourtId);
+    const courtNameStr = assignedCourtObj ? assignedCourtObj.courtname : `Court #${finalCourtId}`;
+
+    removeDraftMatch(matchId);
+    showToast(`Match successfully saved and sent to ${courtNameStr}!`, "success");
+
+    await loadCourtsData();
+    await loadQueueData();
+
+  } catch (err) {
+    console.error("Error saving match:", err);
+    showToast("Failed to send match to court: " + err.message, "danger");
   }
 }
 
@@ -938,8 +1448,4 @@ function escapeHtml(str) {
       "'": '&#039;'
     }[m];
   });
-}
-
-function generateMatches() {
-  showToast("Match generation feature is ready!", "info");
 }
