@@ -1,216 +1,158 @@
-// Players Page State
+// Players Management State
 let allPlayers = [];
-let playerStatsMap = {}; // { playerId: { matches: 0, wins: 0, losses: 0 } }
-let playerMatchesMap = {}; // { playerId: [matchDetails...] }
-let activeSessionsMap = {}; // { gameid: gamename }
-
-let addPlayerModalInstance = null;
-let playerHistoryModalInstance = null;
-let deletePlayerModalInstance = null;
+let playerProfileModalInstance = null;
+let currentPlayerMatches = [];
+let currentPlayerSessions = [];
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // Initialize layout.js header & footer
   initPageLayout("Manage Players");
-
-  addPlayerModalInstance = new bootstrap.Modal(document.getElementById('addPlayerModal'));
-  playerHistoryModalInstance = new bootstrap.Modal(document.getElementById('playerHistoryModal'));
-  deletePlayerModalInstance = new bootstrap.Modal(document.getElementById('deletePlayerModal'));
+  playerProfileModalInstance = new bootstrap.Modal(document.getElementById('playerProfileModal'));
 
   await checkDbConnection();
-  await loadActiveSessions();
-  await loadPlayersPageData();
+  populateRatingDropdowns();
+  await loadPlayersDirectory();
 });
 
-async function loadActiveSessions() {
-  try {
-    const { data, error } = await db.from('game').select('gameid, gamename');
-    if (error) throw error;
-    activeSessionsMap = {};
-    (data || []).forEach(g => {
-      activeSessionsMap[g.gameid] = g.gamename || `Session #${g.gameid}`;
-    });
-  } catch (err) {
-    console.warn("Could not load sessions map:", err.message);
-  }
-}
+async function loadPlayersDirectory() {
+  const tbody = document.getElementById('playersTableBody');
+  const countBadge = document.getElementById('playersCountBadge');
 
-async function loadPlayersPageData() {
   try {
-    // Fetch all players
-    const { data: playersData, error: playerErr } = await db
+    const { data: players, error: playerErr } = await db
       .from('players')
       .select('*')
       .order('name', { ascending: true });
 
     if (playerErr) throw playerErr;
-    allPlayers = playersData || [];
+    allPlayers = players || [];
 
-    // Fetch match and player-match links to calculate stats & history
     const { data: matchData, error: matchErr } = await db
-      .from('match')
-      .select('*, playermatch(*, players(*)), courts(courtname)');
+      .from('playermatch')
+      .select('playerid, teamid, matchid, match(winning_team, enddatetime)');
 
     if (matchErr) throw matchErr;
 
-    playerStatsMap = {};
-    playerMatchesMap = {};
+    const statsMap = {};
+    (matchData || []).forEach(pm => {
+      const pId = pm.playerid;
+      if (!pId) return;
+      if (!statsMap[pId]) statsMap[pId] = { matches: 0, wins: 0, losses: 0 };
 
-    (matchData || []).forEach(m => {
-      const pmList = m.playermatch || [];
-      const winner = m.winning_team;
-
-      pmList.forEach(pm => {
-        const pId = pm.playerid;
-        if (!pId) return;
-
-        // Stats accumulation (Only count completed matches for W/L record)
-        if (!playerStatsMap[pId]) {
-          playerStatsMap[pId] = { matches: 0, wins: 0, losses: 0 };
-        }
-        
-        const isCompleted = m.enddatetime !== null;
-        if (isCompleted) {
-          playerStatsMap[pId].matches += 1;
-          if (winner !== null && winner !== undefined) {
-            if (pm.teamid === winner) {
-              playerStatsMap[pId].wins += 1;
-            } else {
-              playerStatsMap[pId].losses += 1;
-            }
+      if (pm.match && pm.match.enddatetime !== null) {
+        statsMap[pId].matches += 1;
+        if (pm.match.winning_team !== null && pm.match.winning_team !== undefined) {
+          if (pm.match.winning_team === pm.teamid) {
+            statsMap[pId].wins += 1;
+          } else {
+            statsMap[pId].losses += 1;
           }
         }
-
-        // Match history collection
-        if (!playerMatchesMap[pId]) {
-          playerMatchesMap[pId] = [];
-        }
-        playerMatchesMap[pId].push({
-          match: m,
-          teamid: pm.teamid,
-          teammates: pmList.filter(x => x.teamid === pm.teamid && x.playerid !== pId).map(x => x.players ? x.players.name : 'Unknown'),
-          opponents: pmList.filter(x => x.teamid !== pm.teamid).map(x => x.players ? x.players.name : 'Unknown')
-        });
-      });
+      }
     });
 
-    renderPlayersUI();
+    allPlayers.forEach(p => {
+      p.stats = statsMap[p.playerid] || { matches: 0, wins: 0, losses: 0 };
+    });
+
+    updateSummaryCards();
+    filterAndRenderPlayers();
+
   } catch (err) {
-    console.error("Failed to load players directory data:", err);
-    showToast("Error loading players: " + err.message, "danger");
+    console.error("Error loading players directory:", err);
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-danger">Failed to load players: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
-function renderPlayersUI() {
-  renderStatsCards();
-  filterPlayersTable();
-}
-
-function renderStatsCards() {
+function updateSummaryCards() {
   const total = allPlayers.length;
-  const checkedIn = allPlayers.filter(p => p.currentgameid && p.is_checked_in !== false).length;
-  const checkedOut = allPlayers.filter(p => p.currentgameid && p.is_checked_in === false).length;
-  const available = total - checkedIn - checkedOut;
+  let available = 0;
+  let checkedIn = 0;
+  let checkedOut = 0;
+
+  allPlayers.forEach(p => {
+    if (p.sessionstatus === 'CHECKED_IN') {
+      checkedIn++;
+    } else if (p.sessionstatus === 'CHECKED_OUT') {
+      checkedOut++;
+    } else {
+      available++;
+    }
+  });
 
   document.getElementById('statTotalPlayers').textContent = total;
-  document.getElementById('statAvailablePlayers').textContent = available;
-  document.getElementById('statCheckedInPlayers').textContent = checkedIn;
-  document.getElementById('statCheckedOutPlayers').textContent = checkedOut;
-
-  document.getElementById('totalPlayerCountSubtext').textContent = `${total} total registered player(s) in database.`;
+  document.getElementById('statAvailablePool').textContent = available;
+  document.getElementById('statCheckedIn').textContent = checkedIn;
+  document.getElementById('statCheckedOut').textContent = checkedOut;
 }
 
-function filterPlayersTable() {
+function filterAndRenderPlayers() {
   const searchVal = document.getElementById('playerSearchInput').value.trim().toLowerCase();
   const statusFilter = document.getElementById('playerStatusFilter').value;
+  const tbody = document.getElementById('playersTableBody');
+  const countBadge = document.getElementById('playersCountBadge');
 
-  const filtered = allPlayers.filter(p => {
+  let filtered = allPlayers.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchVal);
-    
     let matchesStatus = true;
+
     if (statusFilter === 'CHECKED_IN') {
-      matchesStatus = p.currentgameid !== null && p.is_checked_in !== false;
+      matchesStatus = p.sessionstatus === 'CHECKED_IN';
     } else if (statusFilter === 'CHECKED_OUT') {
-      matchesStatus = p.currentgameid !== null && p.is_checked_in === false;
+      matchesStatus = p.sessionstatus === 'CHECKED_OUT';
     } else if (statusFilter === 'UNASSIGNED') {
-      matchesStatus = p.currentgameid === null;
+      matchesStatus = !p.sessionstatus || p.sessionstatus === 'UNASSIGNED';
     }
 
     return matchesSearch && matchesStatus;
   });
 
-  document.getElementById('tableFilterCountBadge').textContent = `Showing ${filtered.length} player(s)`;
-  renderPlayersTableBody(filtered);
-}
+  countBadge.textContent = `Showing ${filtered.length} of ${allPlayers.length} player(s)`;
 
-function renderPlayersTableBody(playersList) {
-  const tbody = document.getElementById('playersTableBody');
-  if (!tbody) return;
-
-  if (playersList.length === 0) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="6" class="text-center py-4 text-muted">
-          <i class="bi bi-search fs-3 d-block mb-1 opacity-50"></i>
-          No players found matching your filter criteria.
-        </td>
-      </tr>`;
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted">No players match your search or filter criteria.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = '';
 
-  playersList.forEach(player => {
-    const stats = playerStatsMap[player.playerid] || { matches: 0, wins: 0, losses: 0 };
-    
-    // Rating Badge
-    let ratingBadge = '<span class="text-muted small">Unassigned</span>';
-    if (player.ratingid && typeof RATING_MAP !== 'undefined' && RATING_MAP[player.ratingid]) {
-      const r = RATING_MAP[player.ratingid];
-      const displayVal = r.label || r.value || player.ratingid;
-      ratingBadge = `<span class="badge bg-warning bg-opacity-25 text-dark border border-warning px-2 py-1"><i class="bi bi-star-fill text-warning me-1"></i>${escapeHtml(displayVal)}</span>`;
+  filtered.forEach(p => {
+    let ratingLabel = 'Unassigned';
+    if (p.ratingid && typeof RATING_MAP !== 'undefined' && RATING_MAP[p.ratingid]) {
+      const r = RATING_MAP[p.ratingid];
+      ratingLabel = r.label || r.value || p.ratingid;
     }
 
-    // Gender Badge
-    let genderBadge = '<span class="text-muted small">-</span>';
-    if (player.gender) {
-      const gText = player.gender === 'F' ? 'Female (F)' : 'Male (M)';
-      genderBadge = `<span class="badge bg-info bg-opacity-10 text-info border border-info px-2 py-1">${gText}</span>`;
+    const genderText = p.gender === 'F' ? 'Female (F)' : p.gender === 'M' ? 'Male (M)' : '-';
+
+    let statusBadge = '<span class="badge bg-secondary bg-opacity-10 text-secondary border">Unassigned</span>';
+    if (p.sessionstatus === 'CHECKED_IN') {
+      statusBadge = '<span class="badge bg-success bg-opacity-10 text-success border border-success">Checked In</span>';
+    } else if (p.sessionstatus === 'CHECKED_OUT') {
+      statusBadge = '<span class="badge bg-secondary bg-opacity-10 text-secondary border">Checked Out</span>';
     }
 
-    // Status Badge
-    let statusBadge = '<span class="badge bg-secondary bg-opacity-10 text-secondary border px-2 py-1">Unassigned</span>';
-    if (player.currentgameid) {
-      if (player.is_checked_in !== false) {
-        statusBadge = `<span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-1"><i class="bi bi-check-circle-fill me-1"></i>Checked In</span>`;
-      } else {
-        statusBadge = `<span class="badge bg-secondary bg-opacity-25 text-dark border px-2 py-1"><i class="bi bi-dash-circle me-1"></i>Checked Out</span>`;
-      }
-    }
+    const stats = p.stats || { matches: 0, wins: 0, losses: 0 };
+    const statsText = `${stats.matches} matches <small class="text-muted">(${stats.wins}W - ${stats.losses}L)</small>`;
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="ps-4">
-        <div class="fw-bold text-dark">${escapeHtml(player.name)}</div>
-        <small class="text-muted">ID: ${player.playerid}</small>
+        <div class="fw-bold text-dark">${escapeHtml(p.name)}</div>
+        <small class="text-muted">ID: ${p.playerid}</small>
       </td>
-      <td>${ratingBadge}</td>
-      <td>${genderBadge}</td>
+      <td><span class="badge bg-warning bg-opacity-25 text-dark border border-warning px-2 py-1">${escapeHtml(ratingLabel)}</span></td>
+      <td><span class="badge bg-info bg-opacity-10 text-info border border-info">${genderText}</span></td>
       <td>${statusBadge}</td>
-      <td>
-        <div class="d-flex align-items-center gap-2">
-          <span class="badge bg-light text-dark border">${stats.matches} matches</span>
-          <span class="small text-muted fw-semibold">(${stats.wins}W - ${stats.losses}L)</span>
-        </div>
-      </td>
+      <td class="fw-semibold">${statsText}</td>
       <td class="text-end pe-4">
-        <div class="d-flex align-items-center justify-content-end gap-2">
-          <button class="btn btn-sm btn-outline-info" onclick="openPlayerHistoryModal(${player.playerid})" title="View Match History">
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-primary" onclick="openPlayerProfile(${p.playerid})" title="View Profile & Match History">
             <i class="bi bi-clock-history"></i>
           </button>
-          <button class="btn btn-sm btn-outline-primary" onclick="openEditPlayerModal(${player.playerid})" title="Edit Player">
+          <button class="btn btn-outline-secondary" onclick="openEditPlayerModal(${p.playerid})" title="Edit Player">
             <i class="bi bi-pencil-fill"></i>
           </button>
-          <button class="btn btn-sm btn-outline-danger" onclick="openDeletePlayerModal(${player.playerid})" title="Delete Player">
+          <button class="btn btn-outline-danger" onclick="deletePlayer(${p.playerid})" title="Delete Player">
             <i class="bi bi-trash-fill"></i>
           </button>
         </div>
@@ -221,193 +163,72 @@ function renderPlayersTableBody(playersList) {
 }
 
 function openAddPlayerModal() {
-  document.getElementById('addPlayerModalLabel').innerHTML = `<i class="bi bi-person-plus-fill text-primary"></i> Add New Player`;
-  document.getElementById('modalPlayerId').value = '';
-  document.getElementById('modalPlayerNameInput').value = '';
-  document.getElementById('modalPlayerGenderSelect').value = '';
-  resetStarRating();
+  document.getElementById('addPlayerModalLabel').textContent = 'Add New Player';
+  document.getElementById('editPlayerId').value = '';
+  document.getElementById('playerNameInput').value = '';
+  document.getElementById('playerRatingSelect').value = '';
+  document.getElementById('playerGenderSelect').value = '';
 }
 
 function openEditPlayerModal(playerId) {
   const player = allPlayers.find(p => p.playerid === playerId);
   if (!player) return;
 
-  document.getElementById('addPlayerModalLabel').innerHTML = `<i class="bi bi-pencil-square text-primary"></i> Edit Player`;
-  document.getElementById('modalPlayerId').value = player.playerid;
-  document.getElementById('modalPlayerNameInput').value = player.name || '';
-  document.getElementById('modalPlayerGenderSelect').value = player.gender || '';
+  document.getElementById('addPlayerModalLabel').textContent = 'Edit Player Details';
+  document.getElementById('editPlayerId').value = player.playerid;
+  document.getElementById('playerNameInput').value = player.name || '';
+  document.getElementById('playerRatingSelect').value = player.ratingid || '';
+  document.getElementById('playerGenderSelect').value = player.gender || '';
 
-  if (player.ratingid) {
-    setStarRating(parseInt(player.ratingid, 10));
-  } else {
-    resetStarRating();
-  }
-
-  addPlayerModalInstance.show();
+  const modal = new bootstrap.Modal(document.getElementById('addPlayerModal'));
+  modal.show();
 }
 
-function resetStarRating() {
-  const stars = document.querySelectorAll('#starRatingContainer .style-star');
-  stars.forEach(s => {
-    s.classList.remove('bi-star-fill');
-    s.classList.add('bi-star');
-  });
-  document.getElementById('modalPlayerRatingId').value = '';
-  document.getElementById('ratingValueBadge').textContent = 'Unassigned';
-}
-
-function setStarRating(starCount) {
-  const stars = document.querySelectorAll('#starRatingContainer .style-star');
-  stars.forEach((star, index) => {
-    if (index < starCount) {
-      star.classList.remove('bi-star');
-      star.classList.add('bi-star-fill');
-    } else {
-      star.classList.remove('bi-star-fill');
-      star.classList.add('bi-star');
-    }
-  });
-
-  const ratingInfo = (typeof RATING_MAP !== 'undefined' && RATING_MAP[starCount]) 
-    ? RATING_MAP[starCount] 
-    : { ratingid: starCount, label: "Unassigned" };
-  
-  document.getElementById('modalPlayerRatingId').value = ratingInfo.ratingid !== undefined ? ratingInfo.ratingid : starCount;
-  document.getElementById('ratingValueBadge').textContent = ratingInfo.label || ratingInfo.value || 'Unassigned';
-}
-
-async function handleSavePlayer() {
-  const playerId = document.getElementById('modalPlayerId').value;
-  const name = document.getElementById('modalPlayerNameInput').value.trim();
-  const rawRatingId = document.getElementById('modalPlayerRatingId').value;
-  const gender = document.getElementById('modalPlayerGenderSelect').value || null;
-  const ratingid = rawRatingId ? parseInt(rawRatingId, 10) : null;
-  const saveBtn = document.getElementById('savePlayerBtn');
+async function savePlayerForm() {
+  const playerId = document.getElementById('editPlayerId').value;
+  const name = document.getElementById('playerNameInput').value.trim();
+  const ratingid = document.getElementById('playerRatingSelect').value ? parseInt(document.getElementById('playerRatingSelect').value) : null;
+  const gender = document.getElementById('playerGenderSelect').value || null;
 
   if (!name) {
-    showToast("Please enter a player name.", "warning");
+    showToast('Please enter a player name.', 'warning');
     return;
   }
-
-  saveBtn.disabled = true;
 
   try {
     if (playerId) {
-      // Update existing player
       const { error } = await db
         .from('players')
         .update({ name, ratingid, gender })
-        .eq('playerid', playerId);
+        .eq('playerid', parseInt(playerId));
 
       if (error) throw error;
-      showToast(`Updated player "${name}" successfully!`, "success");
+      showToast('Player updated successfully!', 'success');
     } else {
-      // Insert new player
       const { error } = await db
         .from('players')
-        .insert([{ name, ratingid, gender, currentgameid: null, is_checked_in: null }]);
+        .insert([{ name, ratingid, gender, sessionstatus: 'UNASSIGNED' }]);
 
       if (error) throw error;
-      showToast(`Added player "${name}" successfully!`, "success");
+      showToast('New player added successfully!', 'success');
     }
 
-    addPlayerModalInstance.hide();
-    await loadPlayersPageData();
+    bootstrap.Modal.getInstance(document.getElementById('addPlayerModal')).hide();
+    await loadPlayersDirectory();
+
   } catch (err) {
     console.error("Error saving player:", err);
-    showToast("Failed to save player: " + err.message, "danger");
-  } finally {
-    saveBtn.disabled = false;
+    showToast(`Failed to save player: ${err.message}`, 'danger');
   }
 }
 
-function openPlayerHistoryModal(playerId) {
+async function deletePlayer(playerId) {
   const player = allPlayers.find(p => p.playerid === playerId);
   if (!player) return;
 
-  document.getElementById('historyPlayerNameHeader').textContent = `${player.name} - Match History`;
-
-  const stats = playerStatsMap[playerId] || { matches: 0, wins: 0, losses: 0 };
-  const winRate = stats.matches > 0 ? Math.round((stats.wins / stats.matches) * 100) : 0;
-  document.getElementById('historyWinRateBadge').textContent = `Win Rate: ${winRate}% (${stats.wins}W - ${stats.losses}L)`;
-
-  const container = document.getElementById('playerHistoryContentContainer');
-  const matches = playerMatchesMap[playerId] || [];
-
-  if (matches.length === 0) {
-    container.innerHTML = `<div class="text-center py-4 text-muted italic">No match history recorded for this player yet.</div>`;
-    playerHistoryModalInstance.show();
+  if (!confirm(`Are you sure you want to delete player "${player.name}"? This action cannot be undone.`)) {
     return;
   }
-
-  let html = `
-    <div class="table-responsive">
-      <table class="table table-sm table-striped align-middle mb-0">
-        <thead class="table-light fs-7 text-uppercase text-muted">
-          <tr>
-            <th>Session</th>
-            <th>Court</th>
-            <th>Teammate</th>
-            <th>Opponents</th>
-            <th class="text-center">Result</th>
-          </tr>
-        </thead>
-        <tbody>
-  `;
-
-  matches.forEach(mObj => {
-    const m = mObj.match;
-    const sessionName = activeSessionsMap[m.gameid] || `Session #${m.gameid}`;
-    
-    // Check if match is in draft (courtid is null and enddatetime is null)
-    let courtName = 'N/A';
-    if (m.courtid !== null && m.courtid !== undefined) {
-      courtName = m.courts ? m.courts.courtname : `Court #${m.courtid}`;
-    }
-
-    const teammateStr = mObj.teammates.length > 0 ? mObj.teammates.join(', ') : 'None';
-    const opponentsStr = mObj.opponents.length > 0 ? mObj.opponents.join(' & ') : 'None';
-
-    let resultBadge = '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning">In Draft</span>';
-    if (m.enddatetime !== null && m.enddatetime !== undefined) {
-      if (m.winning_team !== null && m.winning_team !== undefined) {
-        if (m.winning_team === mObj.teamid) {
-          resultBadge = `<span class="badge bg-success bg-opacity-10 text-success border border-success">Won (${m.team1_score}-${m.team2_score})</span>`;
-        } else {
-          resultBadge = `<span class="badge bg-danger bg-opacity-10 text-danger border border-danger">Lost (${m.team1_score}-${m.team2_score})</span>`;
-        }
-      }
-    } else if (m.courtid !== null && m.courtid !== undefined) {
-      resultBadge = '<span class="badge bg-primary bg-opacity-10 text-primary border border-primary">In Progress</span>';
-    }
-
-    html += `
-      <tr>
-        <td><small class="fw-semibold text-dark">${escapeHtml(sessionName)}</small></td>
-        <td><small class="text-muted">${escapeHtml(courtName)}</small></td>
-        <td><small class="text-dark">${escapeHtml(teammateStr)}</small></td>
-        <td><small class="text-muted">${escapeHtml(opponentsStr)}</small></td>
-        <td class="text-center">${resultBadge}</td>
-      </tr>
-    `;
-  });
-
-  html += `</tbody></table></div>`;
-  container.innerHTML = html;
-  playerHistoryModalInstance.show();
-}
-
-function openDeletePlayerModal(playerId) {
-  const player = allPlayers.find(p => p.playerid === playerId);
-  if (!player) return;
-
-  document.getElementById('deletePlayerIdInput').value = player.playerid;
-  document.getElementById('deletePlayerNameDisplay').textContent = player.name;
-  deletePlayerModalInstance.show();
-}
-
-async function executeDeletePlayer() {
-  const playerId = document.getElementById('deletePlayerIdInput').value;
 
   try {
     const { error } = await db
@@ -416,14 +237,202 @@ async function executeDeletePlayer() {
       .eq('playerid', playerId);
 
     if (error) throw error;
+    showToast('Player deleted successfully.', 'success');
+    await loadPlayersDirectory();
 
-    deletePlayerModalInstance.hide();
-    showToast("Player deleted successfully!", "info");
-    await loadPlayersPageData();
   } catch (err) {
-    console.error("Failed to delete player:", err);
-    showToast("Failed to delete player: " + err.message, "danger");
+    console.error("Error deleting player:", err);
+    showToast(`Failed to delete player: ${err.message}`, 'danger');
   }
+}
+
+async function openPlayerProfile(playerId) {
+  const player = allPlayers.find(p => p.playerid === playerId);
+  if (!player) return;
+
+  let ratingLabel = 'Unassigned';
+  if (player.ratingid && typeof RATING_MAP !== 'undefined' && RATING_MAP[player.ratingid]) {
+    const r = RATING_MAP[player.ratingid];
+    ratingLabel = r.label || r.value || player.ratingid;
+  }
+  const genderText = player.gender === 'F' ? 'Female' : player.gender === 'M' ? 'Male' : 'Not Specified';
+
+  document.getElementById('modalProfileName').textContent = player.name;
+  document.getElementById('modalProfileMeta').textContent = `Rating: ${ratingLabel} | Gender: ${genderText}`;
+
+  // Reset filters
+  const sessionFilterSelect = document.getElementById('modalSessionFilter');
+  sessionFilterSelect.innerHTML = '<option value="ALL">All Sessions</option>';
+  document.getElementById('modalMatchSearchInput').value = '';
+
+  const historyBody = document.getElementById('playerMatchHistoryBody');
+  historyBody.innerHTML = `<tr><td colspan="7" class="text-center py-3 text-muted">Loading match history...</td></tr>`;
+
+  playerProfileModalInstance.show();
+
+  try {
+    const { data: pmData, error: pmErr } = await db
+      .from('playermatch')
+      .select('*, match(*, game(gameid, gamename, startdatetime), courts(courtname), playermatch(*, players(playerid, name)))')
+      .eq('playerid', playerId);
+
+    if (pmErr) throw pmErr;
+
+    currentPlayerMatches = pmData || [];
+
+    // Extract unique sessions for dropdown
+    const sessionMap = new Map();
+    currentPlayerMatches.forEach(pm => {
+      if (pm.match && pm.match.game) {
+        const g = pm.match.game;
+        sessionMap.set(g.gameid, g.gamename || `Session #${g.gameid}`);
+      }
+    });
+
+    currentPlayerSessions = Array.from(sessionMap.entries());
+    currentPlayerSessions.forEach(([gId, gName]) => {
+      const opt = document.createElement('option');
+      opt.value = String(gId);
+      opt.textContent = gName;
+      sessionFilterSelect.appendChild(opt);
+    });
+
+    filterAndRenderPlayerMatches();
+
+  } catch (err) {
+    console.error("Error loading player match history:", err);
+    historyBody.innerHTML = `<tr><td colspan="7" class="text-center py-3 text-danger">Failed to load match history.</td></tr>`;
+  }
+}
+
+function filterAndRenderPlayerMatches() {
+  const selectedSession = document.getElementById('modalSessionFilter').value;
+  const searchVal = document.getElementById('modalMatchSearchInput').value.trim().toLowerCase();
+  const historyBody = document.getElementById('playerMatchHistoryBody');
+
+  const filtered = currentPlayerMatches.filter(pm => {
+    const match = pm.match;
+    if (!match) return false;
+
+    // Only show completed matches
+    if (match.enddatetime === null) return false;
+
+    // Session Filter check
+    if (selectedSession !== 'ALL') {
+      if (!match.game || String(match.game.gameid) !== String(selectedSession)) {
+        return false;
+      }
+    }
+
+    // Search Filter check (court, teammate, opponents)
+    if (searchVal) {
+      const courtName = match.courts ? match.courts.courtname.toLowerCase() : '';
+      
+      const teamMates = [];
+      const opponents = [];
+
+      (match.playermatch || []).forEach(otherPm => {
+        if (otherPm.players) {
+          const pName = otherPm.players.name.toLowerCase();
+          if (otherPm.teamid === pm.teamid) {
+            teamMates.push(pName);
+          } else {
+            opponents.push(pName);
+          }
+        }
+      });
+
+      const searchableText = `${courtName} ${teamMates.join(' ')} ${opponents.join(' ')}`;
+      if (!searchableText.includes(searchVal)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    historyBody.innerHTML = `<tr><td colspan="7" class="text-center py-3 text-muted">No match records found matching your filters.</td></tr>`;
+    return;
+  }
+
+  historyBody.innerHTML = '';
+
+  filtered.forEach(pm => {
+    const match = pm.match;
+    const sessionName = match.game && match.game.gamename ? match.game.gamename : 'Session';
+    const matchDate = match.startdatetime ? new Date(match.startdatetime).toLocaleDateString() : '';
+    const courtName = match.courts ? match.courts.courtname : 'Court';
+
+    const teammates = [];
+    const opponents = [];
+
+    (match.playermatch || []).forEach(otherPm => {
+      if (otherPm.players && otherPm.playerid !== pm.playerid) {
+        if (otherPm.teamid === pm.teamid) {
+          teammates.push(otherPm.players.name);
+        } else {
+          opponents.push(otherPm.players.name);
+        }
+      }
+    });
+
+    const teammateStr = teammates.length > 0 ? teammates.join(' & ') : 'None (Singles)';
+    const opponentStr = opponents.length > 0 ? opponents.join(' & ') : 'Unknown';
+
+    let t1Score = match.team1_score || 0;
+    let t2Score = match.team2_score || 0;
+    const scoreStr = `${t1Score} - ${t2Score}`;
+
+    let won = false;
+    if (match.winning_team !== null && match.winning_team !== undefined) {
+      won = match.winning_team === pm.teamid;
+    }
+    const resultBadge = won 
+      ? '<span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-1">Win</span>' 
+      : '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger px-2 py-1">Loss</span>';
+
+    // Duration calculation
+    let durationStr = 'N/A';
+    if (match.startdatetime && match.enddatetime) {
+      const start = new Date(match.startdatetime);
+      const end = new Date(match.enddatetime);
+      const diffMs = Math.max(0, end - start);
+      const totalMins = Math.floor(diffMs / (1000 * 60));
+      const hours = Math.floor(totalMins / 60);
+      const mins = totalMins % 60;
+      durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+    }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="ps-3 py-3">
+        <div class="fw-bold text-dark">${escapeHtml(sessionName)}</div>
+        <small class="text-muted">${matchDate}</small>
+      </td>
+      <td><span class="badge bg-secondary bg-opacity-10 text-secondary border">${escapeHtml(courtName)}</span></td>
+      <td><span class="text-dark fw-medium">${escapeHtml(teammateStr)}</span></td>
+      <td><span class="text-dark fw-medium">${escapeHtml(opponentStr)}</span></td>
+      <td class="text-center"><span class="badge bg-dark text-white px-2 py-1">${scoreStr}</span></td>
+      <td class="text-center">${resultBadge}</td>
+      <td class="text-end pe-3"><span class="badge bg-light text-dark border">${durationStr}</span></td>
+    `;
+    historyBody.appendChild(tr);
+  });
+}
+
+function populateRatingDropdowns() {
+  const select = document.getElementById('playerRatingSelect');
+  if (!select || typeof RATING_MAP === 'undefined') return;
+
+  select.innerHTML = '<option value="">Unassigned</option>';
+  Object.keys(RATING_MAP).forEach(key => {
+    const r = RATING_MAP[key];
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = r.label || r.value || key;
+    select.appendChild(opt);
+  });
 }
 
 function showToast(message, type = 'danger') {

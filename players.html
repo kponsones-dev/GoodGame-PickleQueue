@@ -12,7 +12,6 @@
   
   <!-- Stylesheets -->
   <link href="css/style.css" rel="stylesheet">
-  <link href="css/players.css" rel="stylesheet">
   <link href="css/index.css" rel="stylesheet">
 </head>
 <body>
@@ -20,7 +19,7 @@
   <!-- Main Content Card (Wrapped dynamically by js/layout.js) -->
   <div class="row g-4">
     
-    <!-- Header & Statistics Section -->
+    <!-- Header Section -->
     <div class="col-12">
       <div class="card shadow-sm bg-white border-0">
         <div class="card-body p-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
@@ -28,79 +27,77 @@
             <h2 class="h4 fw-bold text-dark mb-1">
               <i class="bi bi-people-fill text-primary me-2"></i> Player Directory
             </h2>
-            <p class="text-muted small mb-0" id="totalPlayerCountSubtext">Loading player directory stats...</p>
+            <p class="text-muted small mb-0">Manage registered players, skill ratings, status, and view detailed individual match logs.</p>
           </div>
           <div>
             <button class="btn btn-primary btn-sm d-flex align-items-center gap-1 fw-bold px-3 py-2" data-bs-toggle="modal" data-bs-target="#addPlayerModal" onclick="openAddPlayerModal()">
-              <i class="bi bi-plus-lg"></i> Add New Player
+              <i class="bi bi-person-plus-fill"></i> Add New Player
             </button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Quick Stats Summary Cards -->
+    <!-- Quick Stats Overview -->
     <div class="col-12">
       <div class="row g-3">
         <div class="col-6 col-md-3">
-          <div class="card border-0 shadow-sm bg-white text-center p-3">
-            <span class="text-muted small uppercase fw-bold mb-1">Total Players</span>
-            <h3 class="fw-bold text-dark mb-0" id="statTotalPlayers">0</h3>
+          <div class="card shadow-sm border-0 bg-white p-3 text-center">
+            <span class="text-muted small text-uppercase fw-bold">Total Players</span>
+            <h3 class="fw-bold text-dark mb-0 mt-1" id="statTotalPlayers">0</h3>
           </div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="card border-0 shadow-sm bg-white text-center p-3">
-            <span class="text-muted small uppercase fw-bold mb-1">Available Pool</span>
-            <h3 class="fw-bold text-success mb-0" id="statAvailablePlayers">0</h3>
+          <div class="card shadow-sm border-0 bg-white p-3 text-center">
+            <span class="text-muted small text-uppercase fw-bold">Available Pool</span>
+            <h3 class="fw-bold text-primary mb-0 mt-1" id="statAvailablePool">0</h3>
           </div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="card border-0 shadow-sm bg-white text-center p-3">
-            <span class="text-muted small uppercase fw-bold mb-1">Checked In</span>
-            <h3 class="fw-bold text-primary mb-0" id="statCheckedInPlayers">0</h3>
+          <div class="card shadow-sm border-0 bg-white p-3 text-center">
+            <span class="text-muted small text-uppercase fw-bold">Checked In</span>
+            <h3 class="fw-bold text-success mb-0 mt-1" id="statCheckedIn">0</h3>
           </div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="card border-0 shadow-sm bg-white text-center p-3">
-            <span class="text-muted small uppercase fw-bold mb-1">Checked Out</span>
-            <h3 class="fw-bold text-secondary mb-0" id="statCheckedOutPlayers">0</h3>
+          <div class="card shadow-sm border-0 bg-white p-3 text-center">
+            <span class="text-muted small text-uppercase fw-bold">Checked Out</span>
+            <h3 class="fw-bold text-secondary mb-0 mt-1" id="statCheckedOut">0</h3>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Filter & Search Section -->
+    <!-- Directory Search & Status Filter Toolbar -->
     <div class="col-12">
-      <div class="card shadow-sm bg-white border-0">
-        <div class="card-body p-3">
-          <div class="row g-3 align-items-center">
-            <div class="col-12 col-md-8">
-              <div class="input-group">
-                <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                <input type="text" id="playerSearchInput" class="form-control border-start-0 ps-0" placeholder="Filter players by name..." oninput="filterPlayersTable()">
-              </div>
+      <div class="card shadow-sm bg-white border-0 p-3">
+        <div class="row g-3 align-items-center">
+          <div class="col-12 col-md-8">
+            <div class="input-group input-group-sm">
+              <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+              <input type="text" id="playerSearchInput" class="form-control border-start-0 ps-0" placeholder="Filter players by name..." oninput="filterAndRenderPlayers()">
             </div>
-            <div class="col-12 col-md-4">
-              <select id="playerStatusFilter" class="form-select" onchange="filterPlayersTable()">
-                <option value="ALL">All Statuses</option>
-                <option value="CHECKED_IN">Checked In</option>
-                <option value="CHECKED_OUT">Checked Out</option>
-                <option value="UNASSIGNED">Unassigned / Available</option>
-              </select>
-            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <select id="playerStatusFilter" class="form-select form-select-sm" onchange="filterAndRenderPlayers()">
+              <option value="ALL">All Statuses</option>
+              <option value="CHECKED_IN">Checked In</option>
+              <option value="CHECKED_OUT">Checked Out</option>
+              <option value="UNASSIGNED">Unassigned / Available</option>
+            </select>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Players Table Section -->
+    <!-- Players Table -->
     <div class="col-12">
       <div class="card shadow-sm bg-white border-0">
         <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
           <h5 class="fw-bold m-0 text-dark d-flex align-items-center gap-2">
-            <i class="bi bi-table text-primary"></i> Registered Players Directory
+            <i class="bi bi-list-nested text-primary"></i> Registered Players Directory
           </h5>
-          <span class="badge bg-light text-dark border" id="tableFilterCountBadge">Showing 0 players</span>
+          <span class="badge bg-light text-dark border" id="playersCountBadge">Loading players...</span>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -117,7 +114,7 @@
               </thead>
               <tbody id="playersTableBody">
                 <tr>
-                  <td colspan="6" class="text-center py-4 text-muted">Loading players directory...</td>
+                  <td colspan="6" class="text-center py-4 text-muted">Loading registered players...</td>
                 </tr>
               </tbody>
             </table>
@@ -132,98 +129,99 @@
   <div class="modal fade" id="addPlayerModal" tabindex="-1" aria-labelledby="addPlayerModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content border-0 shadow">
-        <div class="modal-header py-3">
-          <h5 class="modal-title fw-bold text-dark d-flex align-items-center gap-2" id="addPlayerModalLabel">
-            <i class="bi bi-person-plus-fill text-primary"></i> Add New Player
-          </h5>
+        <div class="modal-header py-3 bg-light">
+          <h5 class="modal-title fw-bold text-dark" id="addPlayerModalLabel">Add New Player</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body py-4">
-          <form id="playerForm" onsubmit="event.preventDefault(); handleSavePlayer();">
-            <input type="hidden" id="modalPlayerId" value="">
-
+          <form id="playerForm">
+            <input type="hidden" id="editPlayerId">
             <div class="mb-3">
-              <label for="modalPlayerNameInput" class="form-label fw-medium">Player Name</label>
-              <input type="text" class="form-control" id="modalPlayerNameInput" placeholder="Enter full name" required>
+              <label for="playerNameInput" class="form-label fw-bold small text-muted">Player Name *</label>
+              <input type="text" class="form-control" id="playerNameInput" placeholder="Enter player full name" required>
             </div>
-
             <div class="mb-3">
-              <label class="form-label fw-medium d-block">Pickleball Skill Rating</label>
-              <div class="d-flex align-items-center gap-2 mb-2" id="starRatingContainer">
-                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(1)" style="cursor:pointer;" title="2.0 - Beginner"></i>
-                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(2)" style="cursor:pointer;" title="2.5 - Advance Beginner"></i>
-                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(3)" style="cursor:pointer;" title="3.0 - Novice"></i>
-                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(4)" style="cursor:pointer;" title="3.5 - Intermediate"></i>
-                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(5)" style="cursor:pointer;" title="4.0 - Advanced"></i>
-                <i class="bi bi-star fs-4 text-warning style-star" onclick="setStarRating(6)" style="cursor:pointer;" title="4.5+ - Expert / Pro"></i>
-              </div>
-              <div class="d-flex align-items-center gap-2">
-                <span class="badge bg-warning bg-opacity-25 text-dark border border-warning px-2 py-1 fs-6" id="ratingValueBadge">Unassigned</span>
-                <input type="hidden" id="modalPlayerRatingId" value="">
-              </div>
+              <label for="playerRatingSelect" class="form-label fw-bold small text-muted">Skill Rating</label>
+              <select class="form-select" id="playerRatingSelect">
+                <!-- Populated dynamically by ratings.js -->
+              </select>
             </div>
-
             <div class="mb-3">
-              <label for="modalPlayerGenderSelect" class="form-label fw-medium">Gender</label>
-              <select class="form-select" id="modalPlayerGenderSelect">
-                <option value="">Not Specified</option>
+              <label for="playerGenderSelect" class="form-label fw-bold small text-muted">Gender</label>
+              <select class="form-select" id="playerGenderSelect">
+                <option value="">Not Specified (-)</option>
                 <option value="M">Male (M)</option>
                 <option value="F">Female (F)</option>
               </select>
             </div>
-
-            <div class="modal-footer px-0 pb-0 pt-3 border-top">
-              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-              <button type="submit" class="btn btn-primary fw-medium px-4" id="savePlayerBtn">
-                <i class="bi bi-check-circle me-1"></i> Save Player
-              </button>
-            </div>
           </form>
+        </div>
+        <div class="modal-footer pt-3 border-top">
+          <button type="button" class="btn btn-secondary btn-sm px-3" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm px-4 fw-bold" onclick="savePlayerForm()">Save Player</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Player History / Details Modal -->
-  <div class="modal fade" id="playerHistoryModal" tabindex="-1" aria-labelledby="playerHistoryModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
+  <!-- Player Profile & Match History Modal -->
+  <div class="modal fade" id="playerProfileModal" tabindex="-1" aria-labelledby="playerProfileModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
       <div class="modal-content border-0 shadow">
-        <div class="modal-header py-3">
-          <h5 class="modal-title fw-bold text-dark d-flex align-items-center gap-2" id="playerHistoryModalLabel">
-            <i class="bi bi-clock-history text-primary"></i> Player Match History
-          </h5>
+        <div class="modal-header py-3 bg-light">
+          <div>
+            <h5 class="modal-title fw-bold text-dark d-flex align-items-center gap-2" id="playerProfileModalLabel">
+              <i class="bi bi-person-badge-fill text-primary"></i> <span id="modalProfileName">Player Profile</span>
+            </h5>
+            <small class="text-muted" id="modalProfileMeta">Skill Rating | Gender | Lifetime Stats</small>
+          </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body py-4">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 id="historyPlayerNameHeader" class="fw-bold text-dark mb-0">Player History</h6>
-            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary px-2 py-1" id="historyWinRateBadge">Win Rate: 0%</span>
+          
+          <h6 class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
+            <i class="bi bi-clock-history text-primary"></i> Match History & Log
+          </h6>
+
+          <!-- Match History Search & Session Filter Toolbar -->
+          <div class="row g-3 align-items-center mb-3 bg-light p-3 rounded border">
+            <div class="col-12 col-md-5">
+              <label class="form-label small fw-bold text-muted mb-1"><i class="bi bi-filter text-primary me-1"></i> Filter by Session:</label>
+              <select id="modalSessionFilter" class="form-select form-select-sm" onchange="filterAndRenderPlayerMatches()">
+                <option value="ALL">All Sessions</option>
+              </select>
+            </div>
+            <div class="col-12 col-md-7">
+              <label class="form-label small fw-bold text-muted mb-1"><i class="bi bi-search text-primary me-1"></i> Search Court, Teammate or Opponent:</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                <input type="text" id="modalMatchSearchInput" class="form-control border-start-0 ps-0" placeholder="Type court name, teammate, or opponent..." oninput="filterAndRenderPlayerMatches()">
+              </div>
+            </div>
           </div>
 
-          <div id="playerHistoryContentContainer">
-            <div class="text-center py-4 text-muted">Loading match history...</div>
+          <div class="table-responsive">
+            <table class="table table-sm table-striped align-middle mb-0">
+              <thead class="table-light fs-7 text-uppercase text-muted">
+                <tr>
+                  <th class="ps-3">Date / Session</th>
+                  <th>Court</th>
+                  <th>Teammate</th>
+                  <th>Opponents</th>
+                  <th class="text-center">Score</th>
+                  <th class="text-center">Result</th>
+                  <th class="text-end pe-3">Duration</th>
+                </tr>
+              </thead>
+              <tbody id="playerMatchHistoryBody">
+                <tr><td colspan="7" class="text-center py-3 text-muted">Loading match history...</td></tr>
+              </tbody>
+            </table>
           </div>
+
         </div>
         <div class="modal-footer pt-3 border-top">
           <button type="button" class="btn btn-secondary btn-sm px-4" data-bs-dismiss="modal">Close</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Delete Player Confirmation Modal -->
-  <div class="modal fade" id="deletePlayerModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-sm">
-      <div class="modal-content border-0 shadow">
-        <div class="modal-body text-center py-4">
-          <input type="hidden" id="deletePlayerIdInput">
-          <i class="bi bi-exclamation-triangle text-danger fs-1 mb-2 d-block"></i>
-          <h5 class="fw-bold">Delete Player?</h5>
-          <p class="text-muted small mb-3">Are you sure you want to delete <span id="deletePlayerNameDisplay" class="fw-semibold text-dark"></span>? This action cannot be undone.</p>
-          <div class="d-flex justify-content-center gap-2">
-            <button type="button" class="btn btn-sm btn-light border" data-bs-dismiss="modal">Cancel</button>
-            <button type="button" class="btn btn-sm btn-danger" onclick="executeDeletePlayer()">Delete</button>
-          </div>
         </div>
       </div>
     </div>
