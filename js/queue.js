@@ -171,7 +171,7 @@ async function loadCourtsData() {
     });
 
     renderCourtsUI();
-    renderMatchPoolUI(); // Ensure draft dropdowns update when court states change
+    renderMatchPoolUI();
     updateCourtTimerDisplays();
   } catch (err) {
     console.warn("Could not load courts from DB:", err.message);
@@ -179,7 +179,7 @@ async function loadCourtsData() {
   }
 }
 
-// Load draft/queued matches from database where courtid IS NULL and enddatetime IS NULL
+// Load draft/queued matches from database sorted by matchid ascending
 async function loadDraftMatchesFromDb() {
   if (!activeSessionId) return;
 
@@ -189,7 +189,8 @@ async function loadDraftMatchesFromDb() {
       .select('*, playermatch(*, players(*))')
       .eq('gameid', activeSessionId)
       .is('courtid', null)
-      .is('enddatetime', null);
+      .is('enddatetime', null)
+      .order('matchid', { ascending: true });
 
     if (error) throw error;
 
@@ -874,11 +875,13 @@ async function checkInPlayer(playerId) {
 
     showToast("Player checked in!", "success");
     renderQueueUI();
+    renderMatchPoolUI();
   } catch (err) {
     console.error("Error checking in player:", err);
     const player = allPlayers.find(p => p.playerid === playerId);
     if (player) player.is_checked_in = true;
     renderQueueUI();
+    renderMatchPoolUI();
   }
 }
 
@@ -1285,22 +1288,56 @@ async function savePlayerEdit() {
 
 async function endCurrentSession() {
   if (!activeSessionId) return;
-  if (!confirm("Are you sure you want to end the current session? All players will be unassigned from this session.")) return;
+  if (!confirm("Are you sure you want to end the current session? All uncompleted/draft matches will be deleted, and all players will be unassigned from this session.")) return;
 
   try {
-    await db
+    // 1. Fetch all uncompleted match IDs for this session (enddatetime IS NULL)
+    const { data: uncompletedMatches, error: fetchErr } = await db
+      .from('match')
+      .select('matchid')
+      .eq('gameid', activeSessionId)
+      .is('enddatetime', null);
+
+    if (fetchErr) throw fetchErr;
+
+    if (uncompletedMatches && uncompletedMatches.length > 0) {
+      const matchIds = uncompletedMatches.map(m => m.matchid);
+
+      // 2. Delete associated playermatch records for uncompleted matches
+      const { error: pmDeleteErr } = await db
+        .from('playermatch')
+        .delete()
+        .in('matchid', matchIds);
+
+      if (pmDeleteErr) throw pmDeleteErr;
+
+      // 3. Delete uncompleted match records themselves
+      const { error: matchDeleteErr } = await db
+        .from('match')
+        .delete()
+        .eq('gameid', activeSessionId)
+        .is('enddatetime', null);
+
+      if (matchDeleteErr) throw matchDeleteErr;
+    }
+
+    // 4. Unassign all players from this session
+    const { error: playerErr } = await db
       .from('players')
       .update({ currentgameid: null, is_checked_in: null })
       .eq('currentgameid', activeSessionId);
 
-    const { error } = await db
+    if (playerErr) throw playerErr;
+
+    // 5. Mark the game session as ended
+    const { error: gameErr } = await db
       .from('game')
       .update({ enddatetime: new Date().toISOString() })
       .eq('gameid', activeSessionId);
 
-    if (error) throw error;
+    if (gameErr) throw gameErr;
 
-    showToast("Session ended successfully.", "success");
+    showToast("Session ended and uncompleted matches cleared successfully.", "success");
     setTimeout(() => {
       window.location.href = 'index.html';
     }, 1000);
@@ -1355,6 +1392,7 @@ async function generateMatches() {
     };
 
     inMemoryMatchPool.push(newDraftMatch);
+    inMemoryMatchPool.sort((a, b) => a.id - b.id);
     await triggerAutoFillForMatch(newDraftMatch.id);
     showToast("Generated and saved new match to queue!", "success");
   } catch (err) {
@@ -1396,6 +1434,7 @@ async function generateCustomMatch() {
     };
 
     inMemoryMatchPool.push(newCustomMatch);
+    inMemoryMatchPool.sort((a, b) => a.id - b.id);
     renderMatchPoolUI();
     showToast("Created custom match slot successfully!", "success");
   } catch (err) {
@@ -1492,10 +1531,12 @@ function getAllAssignedPlayerIds(excludeMatchId = null) {
   return assigned;
 }
 
-// Render Draft Matches with active/inactive court filtering
+// Render Draft Matches sorted by database matchid
 function renderMatchPoolUI() {
   const container = document.getElementById('matchesResultContainer');
   if (!container) return;
+
+  inMemoryMatchPool.sort((a, b) => a.id - b.id);
 
   if (inMemoryMatchPool.length === 0) {
     container.innerHTML = `
@@ -1511,7 +1552,6 @@ function renderMatchPoolUI() {
   const row = container.querySelector('.row');
 
   const busyCourtIds = new Set(Object.keys(activeCourtMatchesMap).map(id => parseInt(id, 10)));
-  // Filter out disabled (isactive === false) and currently busy courts
   const availableCourts = sessionCourts.filter(c => c.isactive !== false && !busyCourtIds.has(c.courtid));
   const sessionPlayers = allPlayers.filter(p => p.currentgameid === activeSessionId && p.is_checked_in !== false);
 
@@ -1580,7 +1620,7 @@ function renderMatchPoolUI() {
     matchCol.innerHTML = `
       <div class="card border shadow-sm h-100">
         <div class="card-header bg-light fw-bold d-flex justify-content-between align-items-center py-2">
-          <span><i class="bi bi-diagram-3 me-1"></i> Draft Match #${idx + 1}</span>
+          <span><i class="bi bi-diagram-3 me-1"></i> Draft Match #${idx + 1} <span class="text-muted fw-normal" style="font-size:0.75rem;">(ID: ${match.id})</span></span>
           <button class="btn-close text-danger" title="Remove Match Slot" onclick="removeDraftMatch(${match.id})"></button>
         </div>
         <div class="card-body p-3">
@@ -1768,7 +1808,14 @@ async function sendMatchToCourt(matchId) {
     finalCourtId = availableCourt[0].courtid;
   }
 
+  if (activeCourtMatchesMap[finalCourtId]) {
+    showToast(`Court is already occupied by an active match. Please select a different court.`, "danger");
+    return;
+  }
+
   try {
+    await saveDraftPlayerLinks(matchId, t1Valid, t2Valid, match.isAutoFill);
+
     const { error: updateErr } = await db
       .from('match')
       .update({
@@ -1779,17 +1826,16 @@ async function sendMatchToCourt(matchId) {
 
     if (updateErr) throw updateErr;
 
-    await saveDraftPlayerLinks(matchId, t1Valid, t2Valid, match.isAutoFill);
-
     const assignedCourtObj = sessionCourts.find(c => c.courtid === finalCourtId);
     const courtNameStr = assignedCourtObj ? assignedCourtObj.courtname : `Court #${finalCourtId}`;
 
     inMemoryMatchPool = inMemoryMatchPool.filter(m => m.id !== matchId);
-    renderMatchPoolUI();
-    showToast(`Match successfully sent to ${courtNameStr}!`, "success");
-
+    
     await loadCourtsData();
     await loadQueueData();
+    await loadDraftMatchesFromDb();
+
+    showToast(`Match successfully sent to ${courtNameStr}!`, "success");
 
   } catch (err) {
     console.error("Error sending match to court:", err);

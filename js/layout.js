@@ -55,7 +55,6 @@ const ADD_PLAYER_COMPONENT_HTML = `
 `;
 
 function attachAddPlayerComponentListeners() {
-  // Use event delegation on the document for maximum reliability with dynamically loaded elements
   document.addEventListener('input', (e) => {
     if (e.target && e.target.id === 'multiPlayerInput') {
       const multiInput = e.target;
@@ -68,7 +67,6 @@ function attachAddPlayerComponentListeners() {
   });
 
   document.addEventListener('click', (e) => {
-    // 1. Clear Button
     if (e.target && (e.target.id === 'clearMultiLineBtn' || e.target.closest('#clearMultiLineBtn'))) {
       const multiInput = document.getElementById('multiPlayerInput');
       const counterSpan = document.getElementById('multiLineCounter');
@@ -77,7 +75,6 @@ function attachAddPlayerComponentListeners() {
       if (multiInput) multiInput.focus();
     }
 
-    // 2. Add All (Bulk) Button
     if (e.target && (e.target.id === 'addMultiPlayerBtn' || e.target.closest('#addMultiPlayerBtn'))) {
       const multiInput = document.getElementById('multiPlayerInput');
       if (!multiInput) return;
@@ -87,12 +84,10 @@ function attachAddPlayerComponentListeners() {
       
       if (names.length === 0) return;
 
-      // Dispatch custom event for page scripts to handle inserting names
       const event = new CustomEvent('addBulkPlayersSubmitted', { detail: { names, rawText } });
       document.dispatchEvent(event);
     }
 
-    // 3. Single Add Button
     if (e.target && (e.target.id === 'addSinglePlayerBtn' || e.target.closest('#addSinglePlayerBtn'))) {
       const singleInput = document.getElementById('singlePlayerInput');
       if (!singleInput) return;
@@ -116,18 +111,15 @@ function injectAddPlayerComponent(containerId = 'addPlayerSlot') {
 function initPageLayout(pageTitle = "PickleQueue") {
   const body = document.body;
 
-  // Prevent double execution if already wrapped
   if (document.getElementById('appLayoutWrapper')) return;
 
   body.className = "py-3 py-md-4 bg-light";
 
-  // 1. Create the main layout wrapper
   const wrapper = document.createElement('div');
   wrapper.id = 'appLayoutWrapper';
   wrapper.className = 'container';
   wrapper.style.maxWidth = '900px';
 
-  // 2. Inject Header and Sidebar HTML into the wrapper
   wrapper.innerHTML = `
     <header class="card shadow-sm mb-4 border-0">
       <div class="card-body d-flex justify-content-between align-items-center py-3">
@@ -161,6 +153,9 @@ function initPageLayout(pageTitle = "PickleQueue") {
           <a href="index.html" class="list-group-item list-group-item-action py-3 fw-medium">
             <i class="bi bi-play-circle text-primary me-2"></i> Start Matchmaking Session
           </a>
+          <a href="sessions.html" class="list-group-item list-group-item-action py-3 fw-medium">
+            <i class="bi bi-clock-history text-success me-2"></i> Game Sessions Archive
+          </a>
           <a href="players.html" class="list-group-item list-group-item-action py-3 fw-medium">
             <i class="bi bi-people text-primary me-2"></i> Manage Players
           </a>
@@ -172,33 +167,27 @@ function initPageLayout(pageTitle = "PickleQueue") {
     </div>
   `;
 
-  // 3. Create the main content container
   const contentContainer = document.createElement('main');
   contentContainer.id = 'pageContentContainer';
   contentContainer.className = 'mb-4';
 
-  // 4. Safely move all existing <body> children into the content container.
   while (body.firstChild) {
     contentContainer.appendChild(body.firstChild);
   }
 
-  // 5. Create and append the footer to the content container
   contentContainer.insertAdjacentHTML('beforeend', `
     <footer class="text-center text-muted py-3 border-top small">
       <p class="mb-0">&copy; 2026 PickleQueue Manager. All rights reserved.</p>
     </footer>
   `);
 
-  // 6. Put everything together in the DOM
   wrapper.appendChild(contentContainer);
   body.appendChild(wrapper);
 
-  // Inject the component and initialize listeners
   injectAddPlayerComponent();
   attachAddPlayerComponentListeners();
 }
 
-// Auto-initialize on page load based on title
 document.addEventListener("DOMContentLoaded", () => {
   let currentPageTitle = "PickleQueue";
   if (document.title.includes("-")) {
