@@ -68,17 +68,22 @@
       <div class="card shadow-sm bg-white border-0">
         <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
           <h5 class="fw-bold m-0 text-dark d-flex align-items-center gap-2">
-            <i class="bi bi-shuffle text-success"></i> Match Generation
+            <i class="bi bi-shuffle text-success"></i> Match Generation (Queue / Drafts)
           </h5>
-          <button class="btn btn-success btn-sm d-flex align-items-center gap-1" onclick="generateMatches()">
-            <i class="bi bi-lightning-charge-fill"></i> Generate Matches
-          </button>
+          <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1 fw-bold" onclick="generateCustomMatch()">
+              <i class="bi bi-plus-circle me-1"></i> Custom Match
+            </button>
+            <button class="btn btn-success btn-sm d-flex align-items-center gap-1 fw-bold" onclick="generateMatches()">
+              <i class="bi bi-lightning-charge-fill me-1"></i> Generate Matches
+            </button>
+          </div>
         </div>
         <div class="card-body">
           <div id="matchesResultContainer" class="text-center py-5 text-muted">
             <i class="bi bi-diagram-3 fs-1 text-secondary opacity-50 mb-2 d-block"></i>
             <p class="mb-1 fw-semibold">No matches generated yet.</p>
-            <p class="small text-muted">Click "Generate Matches" to create balanced matchups for available courts.</p>
+            <p class="small text-muted">Click "Generate Matches" or "Custom Match" to create matchups for available courts.</p>
           </div>
         </div>
       </div>
@@ -150,9 +155,6 @@
           <div class="mb-3">
             <div class="d-flex justify-content-between align-items-center mb-2">
               <span class="fw-medium text-dark">Current Session Roster</span>
-              <button type="button" class="btn btn-link btn-sm text-danger text-decoration-none p-0 d-none" id="clearRosterBtn" onclick="confirmClearRoster()">
-                <i class="bi bi-trash me-1"></i>Clear All
-              </button>
             </div>
 
             <div id="rosterContainer" class="p-3 bg-light rounded border d-flex flex-wrap gap-2 align-items-center" style="min-height: 120px;">
@@ -247,68 +249,72 @@
     </div>
   </div>
 
-<!-- End Match Modal -->
-<div class="modal fade" id="endMatchModal" tabindex="-1" aria-labelledby="endMatchModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered modal-sm">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header bg-light py-2">
-        <h6 class="modal-title fw-bold text-dark" id="endMatchModalLabel">
-          <i class="bi bi-trophy-fill text-warning me-1"></i> End Match & Enter Scores
-        </h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body p-3">
-        <input type="hidden" id="endMatchId" />
-        <input type="hidden" id="endMatchCourtId" />
-
-        <div class="row g-2 align-items-center mb-3">
-          <!-- Team 1 -->
-          <div class="col-6 text-center">
-            <label class="form-label small fw-bold text-dark text-truncate d-block mb-1" id="team1NamesLabel">Team 1</label>
-            <input type="number" id="team1ScoreInput" class="form-select text-center fw-bold fs-5" min="0" max="99" value="11" />
-          </div>
-
-          <!-- VS Divider -->
-          <div class="col-1 text-center px-0">
-            <span class="fw-bold text-danger fs-6">VS</span>
-          </div>
-
-          <!-- Team 2 -->
-          <div class="col-5 text-center">
-            <label class="form-label small fw-bold text-dark text-truncate d-block mb-1" id="team2NamesLabel">Team 2</label>
-            <input type="number" id="team2ScoreInput" class="form-select text-center fw-bold fs-5" min="0" max="99" value="9" />
-          </div>
+  <!-- End Match Modal (Scores blank by default) -->
+  <div class="modal fade" id="endMatchModal" tabindex="-1" aria-labelledby="endMatchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header py-3">
+          <h5 class="modal-title fw-bold text-dark d-flex align-items-center gap-2" id="endMatchModalLabel">
+            <i class="bi bi-trophy text-primary"></i> End Match & Enter Scores
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
+        <div class="modal-body py-4">
+          <input type="hidden" id="endMatchId" />
+          <input type="hidden" id="endMatchCourtId" />
 
-        <!-- Tiebreaker / Manual Winner Selection (Hidden unless scores tie) -->
-        <div id="tieBreakerContainer" class="d-none bg-warning bg-opacity-10 border border-warning rounded p-2 mb-3">
-          <label class="form-label small fw-bold text-dark d-block mb-1 text-center">Select Winner (Tie Game):</label>
-          <div class="d-flex justify-content-center gap-2">
-            <div class="form-check form-check-inline">
-              <input class="form-check-input" type="radio" name="winningTeamRadio" id="winTeam1Radio" value="1" checked>
-              <label class="form-check-label small fw-bold" for="winTeam1Radio">Team 1</label>
+          <div class="row g-3 align-items-center mb-3">
+            <!-- Team 1 Score Input -->
+            <div class="col-5 text-center">
+              <label class="form-label fw-medium text-dark text-truncate d-block mb-1" id="team1NamesLabel">Team 1</label>
+              <input type="number" id="team1ScoreInput" class="form-control form-control-lg text-center fw-bold" min="0" max="99" placeholder="0" value="" />
             </div>
-            <div class="form-check form-check-inline">
-              <input class="form-check-input" type="radio" name="winningTeamRadio" id="winTeam2Radio" value="2">
-              <label class="form-check-label small fw-bold" for="winTeam2Radio">Team 2</label>
+
+            <!-- VS Divider -->
+            <div class="col-2 text-center px-0">
+              <span class="fw-bold text-muted fs-5">VS</span>
+            </div>
+
+            <!-- Team 2 Score Input -->
+            <div class="col-5 text-center">
+              <label class="form-label fw-medium text-dark text-truncate d-block mb-1" id="team2NamesLabel">Team 2</label>
+              <input type="number" id="team2ScoreInput" class="form-control form-control-lg text-center fw-bold" min="0" max="99" placeholder="0" value="" />
             </div>
           </div>
-        </div>
 
-        <!-- Validation Error Message Area -->
-        <div id="endMatchErrorAlert" class="alert alert-danger py-2 small d-none mb-0">
-          <i class="bi bi-exclamation-triangle-fill me-1"></i> <span id="endMatchErrorMessage"></span>
+          <!-- Validation Error Message Area -->
+          <div id="endMatchErrorAlert" class="alert alert-danger py-2 small d-none mb-0">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i> <span id="endMatchErrorMessage"></span>
+          </div>
         </div>
-      </div>
-      <div class="modal-footer bg-light p-2 d-flex justify-content-between">
-        <button type="button" class="btn btn-sm btn-secondary fw-semibold" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-sm btn-success fw-bold px-3" id="saveEndMatchBtn" onclick="handleSaveEndMatch()">
-          <i class="bi bi-check-circle-fill me-1"></i> Save Results
-        </button>
+        <div class="modal-footer pt-3 border-top">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary fw-medium px-4" id="saveEndMatchBtn" onclick="handleSaveEndMatch()">
+            <i class="bi bi-check-circle me-1"></i> Save Results
+          </button>
+        </div>
       </div>
     </div>
   </div>
-</div>
+
+  <!-- Incomplete Match Modal -->
+  <div class="modal fade" id="incompleteMatchModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-body text-center py-4">
+          <input type="hidden" id="incompleteMatchId">
+          <input type="hidden" id="incompleteMatchCourtId">
+          <i class="bi bi-exclamation-triangle text-warning fs-1 mb-2 d-block"></i>
+          <h5 class="fw-bold">Incomplete Match</h5>
+          <p class="text-muted small mb-3">This court does not have the required 4 players assigned. Would you like to disregard and delete this match?</p>
+          <div class="d-flex justify-content-center gap-2">
+            <button type="button" class="btn btn-sm btn-light border" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" class="btn btn-sm btn-danger" onclick="executeDeleteIncompleteMatch()">Disregard & Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Delete Court Confirmation Modal -->
   <div class="modal fade" id="deleteCourtModal" tabindex="-1" aria-hidden="true">
@@ -379,23 +385,6 @@
               </button>
             </div>
           </form>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Clear Roster Modal -->
-  <div class="modal fade" id="clearRosterModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-sm">
-      <div class="modal-content">
-        <div class="modal-body text-center py-4">
-          <i class="bi bi-trash text-danger fs-1 mb-2 d-block"></i>
-          <h5 class="fw-bold">Remove All from Session?</h5>
-          <p class="text-muted small mb-3">This will unassign all players from the current session.</p>
-          <div class="d-flex justify-content-center gap-2">
-            <button type="button" class="btn btn-sm btn-light border" data-bs-dismiss="modal">Cancel</button>
-            <button type="button" class="btn btn-sm btn-danger" data-bs-dismiss="modal" onclick="executeClearRoster()">Remove All</button>
-          </div>
         </div>
       </div>
     </div>
